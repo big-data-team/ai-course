@@ -1,0 +1,866 @@
+[
+ {
+  "id": "r01",
+  "category": "relative_ru",
+  "text": "напомни завтра в 10:30 позвонить Ивану про отчёт",
+  "reference_time": "2026-09-10T19:23:28+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-09-11T10:30:00+05:00",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r02",
+  "category": "weekdays",
+  "text": "в пятницу в 15:00 демо для заказчика",
+  "reference_time": "2026-09-10T19:23:45+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-09-11T15:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r03",
+  "category": "weekdays",
+  "text": "Напомни мне на выходных в ближайшую субботу на следующей неделе написать сантехнику запланировать встречу",
+  "reference_time": "2026-09-12T18:38:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2026-09-19",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r04",
+  "category": "words_ru",
+  "text": "Напомни мне в субботу девятнадцатого числа в 10:35, что нужно связаться с сантехником",
+  "reference_time": "2026-09-12T18:39:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-09-19T10:35:00+05:00",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r05",
+  "category": "relative_ru",
+  "text": "Поставь задачу на сегодня в 16:55 позвонить Даниялу",
+  "reference_time": "2026-09-20T16:28:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-09-20T16:55:00+05:00",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r06",
+  "category": "multiple",
+  "text": "Напомни мне в следующую среду в 21:30 встретить Алину. Напомни об этом за 3 часа до 21:30",
+  "reference_time": "2026-09-21T02:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ambiguous",
+   "kind": "datetime",
+   "alternatives": [
+    "2026-09-23T21:30:00+05:00",
+    "2026-09-23T18:30:00+05:00"
+   ],
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r07",
+  "category": "weekdays",
+  "text": "Андрей, встреча в четверг в 23:30",
+  "reference_time": "2026-09-21T18:03:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-09-24T23:30:00+05:00",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r08",
+  "category": "relative_ru",
+  "text": "Напомни завтра в 11:35 проверить авокадо",
+  "reference_time": "2026-09-27T13:24:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-09-28T11:35:00+05:00",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r09",
+  "category": "relative_ru",
+  "text": "Поставь напоминание сегодня внести встречу с сантехником в календарь в 22:00",
+  "reference_time": "2026-09-28T19:15:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-09-28T22:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r10",
+  "category": "relative_ru",
+  "text": "Напомни мне, пожалуйста, позвонить в 15:30 Асель сегодня",
+  "reference_time": "2026-10-05T14:51:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-10-05T15:30:00+05:00",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r11",
+  "category": "no_date",
+  "text": "Закрыть: /done 8",
+  "reference_time": "2026-10-05T16:15:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "not_found",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r12",
+  "category": "relative_ru",
+  "text": "Поставь задачу сегодня в 22:00 найти насадку для воды и показать её Марату",
+  "reference_time": "2026-10-05T19:22:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-10-05T22:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r13",
+  "category": "weekdays",
+  "text": "Напомни в субботу в 10:00 утра проверить список песен для вокала",
+  "reference_time": "2026-10-05T19:23:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-10-10T10:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "r14",
+  "category": "time_of_day",
+  "text": "Напомни в 19:15 купить лампочки",
+  "reference_time": "2026-10-26T17:33:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-10-26T19:15:00+05:00",
+   "timezone": "Asia/Almaty"
+  },
+  "source": "pm_assistant_log"
+ },
+ {
+  "id": "iso01",
+  "category": "iso_rfc3339",
+  "text": "созвон 2026-11-04T17:00:00+05:00",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T17:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "iso02",
+  "category": "iso_rfc3339",
+  "text": "дедлайн 2026-11-04T12:00:00Z",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T17:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "iso03",
+  "category": "iso_rfc3339",
+  "text": "встреча 2026-11-10 15:30",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-10T15:30:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "iso04",
+  "category": "iso_rfc3339",
+  "text": "релиз 2026-11-10",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2026-11-10",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "unix01",
+  "category": "unix_time",
+  "text": "1793872800",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-05T15:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "unix02",
+  "category": "unix_time",
+  "text": "событие 1793872800000",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-05T15:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "num01",
+  "category": "numeric_dates",
+  "text": "03.04.2026",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2026-04-03",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "num02",
+  "category": "numeric_dates",
+  "text": "03/04/2026",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ambiguous",
+   "kind": "date",
+   "alternatives": [
+    "2026-04-03",
+    "2026-03-04"
+   ],
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "num03",
+  "category": "numeric_dates",
+  "text": "13/04/2026",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2026-04-13",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "num04",
+  "category": "numeric_dates",
+  "text": "сдать отчёт 15.11 в 18:00",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-15T18:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "num05",
+  "category": "numeric_dates",
+  "text": "созвон в 10.30",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "not_found",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "num06",
+  "category": "numeric_dates",
+  "text": "в 10.11",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2026-11-10",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "ru01",
+  "category": "words_ru",
+  "text": "4 ноября",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2026-11-04",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "ru02",
+  "category": "words_ru",
+  "text": "25 декабря в 19:00",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-12-25T19:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "ru03",
+  "category": "words_ru",
+  "text": "1 января 2027 года",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2027-01-01",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "ru04",
+  "category": "words_ru",
+  "text": "3 октября",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2027-10-03",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "en01",
+  "category": "words_en",
+  "text": "November 20 at 3pm",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-20T15:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "en02",
+  "category": "words_en",
+  "text": "on 5 December 2026",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2026-12-05",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "en03",
+  "category": "relative_en",
+  "text": "tomorrow at 5pm",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-05T17:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "en04",
+  "category": "relative_en",
+  "text": "in 2 hours",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T14:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "en05",
+  "category": "weekdays",
+  "text": "next Monday",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2026-11-09",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "rel01",
+  "category": "relative_ru",
+  "text": "через 2 часа",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T14:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "rel02",
+  "category": "relative_ru",
+  "text": "через 30 минут",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T12:30:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "rel03",
+  "category": "relative_ru",
+  "text": "послезавтра",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2026-11-06",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "rel04",
+  "category": "relative_ru",
+  "text": "завтра вечером",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-05T19:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "rel05",
+  "category": "relative_ru",
+  "text": "сегодня после обеда",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T14:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "rel06",
+  "category": "relative_ru",
+  "text": "через 3 дня",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2026-11-07",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "wd01",
+  "category": "weekdays",
+  "text": "в пятницу",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "date",
+   "value": "2026-11-06",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "wd02",
+  "category": "weekdays",
+  "text": "в среду в 10:00",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-11T10:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "wd03",
+  "category": "weekdays",
+  "text": "в следующий понедельник в 9 утра",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-09T09:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "tod01",
+  "category": "time_of_day",
+  "text": "в 5",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T17:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "tod02",
+  "category": "time_of_day",
+  "text": "в 9 утра",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-05T09:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "tod03",
+  "category": "time_of_day",
+  "text": "завтра утром",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-05T09:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "tod04",
+  "category": "time_of_day",
+  "text": "в 11 вечера",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T23:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "tz01",
+  "category": "explicit_zone",
+  "text": "созвон в 15:00 по Москве",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T17:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "tz02",
+  "category": "explicit_zone",
+  "text": "в 9:00 по Алматы",
+  "reference_time": "2026-11-04T08:00:00+03:00",
+  "timezone": "Europe/Moscow",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-05T07:00:00+03:00",
+   "timezone": "Europe/Moscow"
+  }
+ },
+ {
+  "id": "dst01",
+  "category": "dst",
+  "text": "завтра в 2:30",
+  "reference_time": "2026-03-28T12:00:00+01:00",
+  "timezone": "Europe/Berlin",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-03-29T03:30:00+02:00",
+   "timezone": "Europe/Berlin"
+  }
+ },
+ {
+  "id": "dst02",
+  "category": "dst",
+  "text": "завтра в 02:30",
+  "reference_time": "2026-10-24T12:00:00+02:00",
+  "timezone": "Europe/Berlin",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-10-25T02:30:00+02:00",
+   "timezone": "Europe/Berlin"
+  }
+ },
+ {
+  "id": "hist01",
+  "category": "history",
+  "text": "завтра в 10:00",
+  "reference_time": "2023-11-04T12:00:00+06:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2023-11-05T10:00:00+06:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "hist02",
+  "category": "history",
+  "text": "встреча 2024-02-15 10:00",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2024-02-15T10:00:00+06:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "hist03",
+  "category": "history",
+  "text": "встреча 2024-03-15 10:00",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2024-03-15T10:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "inv01",
+  "category": "invalid_date",
+  "text": "30 февраля",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "not_found",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "inv02",
+  "category": "invalid_date",
+  "text": "31.04.2026",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "not_found",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "inv03",
+  "category": "invalid_date",
+  "text": "в 25:00",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "not_found",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "nod01",
+  "category": "no_date",
+  "text": "привет, как дела?",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "not_found",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "nod02",
+  "category": "no_date",
+  "text": "купи 2 литра молока",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "not_found",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "mul01",
+  "category": "multiple",
+  "text": "напомни завтра утром про встречу в пятницу в 15:00",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ambiguous",
+   "kind": "datetime",
+   "alternatives": [
+    "2026-11-05T09:00:00+05:00",
+    "2026-11-06T15:00:00+05:00"
+   ],
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "ref01",
+  "category": "reference_rules",
+  "text": "через час",
+  "reference_time": "2026-11-04T07:00:00Z",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T13:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "ref02",
+  "category": "reference_rules",
+  "text": "через час",
+  "reference_time": "2026-11-04T12:00:00",
+  "timezone": "Asia/Almaty",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T13:00:00+05:00",
+   "timezone": "Asia/Almaty"
+  }
+ },
+ {
+  "id": "ref03",
+  "category": "reference_rules",
+  "text": "завтра в 10:00",
+  "reference_time": "2026-11-04T12:00:00+05:00",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-05T10:00:00+05:00",
+   "timezone": "+05:00"
+  }
+ },
+ {
+  "id": "ref04",
+  "category": "reference_rules",
+  "text": "завтра в 10:00",
+  "reference_time": "2026-11-04T12:00:00",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-05T10:00:00+00:00",
+   "timezone": "UTC"
+  }
+ },
+ {
+  "id": "ref05",
+  "category": "reference_rules",
+  "text": "через час",
+  "reference_time": "2026-11-04T07:00:00Z",
+  "expected": {
+   "status": "ok",
+   "kind": "datetime",
+   "value": "2026-11-04T08:00:00+00:00",
+   "timezone": "UTC"
+  }
+ }
+]

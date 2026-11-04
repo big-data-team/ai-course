@@ -1,0 +1,255 @@
+{
+  "name": "parse_datetime",
+  "description": "<...>",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "<...>"
+      },
+      "reference_time": {
+        "type": "string",
+        "description": "<...>"
+      },
+      "timezone": {
+        "type": "string",
+        "description": "<...>"
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "parse_datetime result",
+    "type": "object",
+    "properties": {
+      "status": {
+        "enum": [
+          "ok",
+          "ambiguous",
+          "not_found"
+        ],
+        "description": "ok: one moment found; ambiguous: several readings, ask the user; not_found: no date or time"
+      },
+      "kind": {
+        "enum": [
+          "datetime",
+          "date"
+        ],
+        "description": "datetime: an exact instant; date: a calendar day without a time"
+      },
+      "value": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/datetime"
+          },
+          {
+            "$ref": "#/$defs/date"
+          }
+        ],
+        "description": "The moment found (status ok)"
+      },
+      "alternatives": {
+        "type": "array",
+        "minItems": 2,
+        "items": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/datetime"
+            },
+            {
+              "$ref": "#/$defs/date"
+            }
+          ]
+        },
+        "description": "Every reading, in order of mention (status ambiguous)"
+      },
+      "timezone": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Zone the values are expressed in: the IANA name given, else the reference offset like +05:00, else UTC"
+      }
+    },
+    "required": [
+      "status",
+      "timezone"
+    ],
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        "then": {
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "alternatives": false
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "status": {
+              "const": "ambiguous"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        "then": {
+          "required": [
+            "alternatives"
+          ],
+          "properties": {
+            "value": false
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "status": {
+              "const": "not_found"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        "then": {
+          "properties": {
+            "kind": false,
+            "value": false,
+            "alternatives": false
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "kind": {
+              "const": "date"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        "then": {
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/date"
+            },
+            "alternatives": {
+              "items": {
+                "$ref": "#/$defs/date"
+              }
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "kind": {
+              "const": "datetime"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        "then": {
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/datetime"
+            },
+            "alternatives": {
+              "items": {
+                "$ref": "#/$defs/datetime"
+              }
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "status": {
+              "const": "ambiguous"
+            },
+            "alternatives": {
+              "items": {
+                "$ref": "#/$defs/date"
+              }
+            }
+          },
+          "required": [
+            "status",
+            "alternatives"
+          ]
+        },
+        "then": {
+          "required": [
+            "kind"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "status": {
+              "const": "ambiguous"
+            },
+            "alternatives": {
+              "items": {
+                "$ref": "#/$defs/datetime"
+              }
+            }
+          },
+          "required": [
+            "status",
+            "alternatives"
+          ]
+        },
+        "then": {
+          "required": [
+            "kind"
+          ]
+        }
+      }
+    ],
+    "$defs": {
+      "date": {
+        "type": "string",
+        "format": "date",
+        "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+      },
+      "datetime": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"
+      }
+    }
+  },
+  "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+  }
+}
