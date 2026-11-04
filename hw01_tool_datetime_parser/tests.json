@@ -1,0 +1,15 @@
+[
+  {
+    "id": "my-01",
+    "visibility": "public",
+    "text": "завтра в 5 вечера",
+    "reference_time": "2026-11-04T12:00:00+05:00",
+    "timezone": "Asia/Almaty",
+    "expected": {
+      "status": "ok",
+      "kind": "datetime",
+      "value": "2026-11-05T17:00:00+05:00",
+      "timezone": "Asia/Almaty"
+    }
+  }
+]
