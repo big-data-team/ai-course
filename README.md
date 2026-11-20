@@ -132,7 +132,7 @@ The Grader does not run models or your code. It reads:
 - the skill in `skill/hr-assistant/`;
 - the files of each run in `runs/<stage>_<model>_r<number>/`: `log.jsonl`, `stderr.txt`, `wall_seconds.txt` and, for Codex and OpenCode, `agent.json`.
 
-So the OS and the way you start the agent are yours to choose, as long as the Grader can read the run. Do steps 1 and 3 in one agent with one model: different agents count as different models.
+So the OS and the way you start the agent are yours to choose, as long as the Grader can read the run. Do steps 1 and 3 in one agent with one model: different agents count as different models. If step 1 has no valid run of the step 3 model with a JSON object in the final answer and a run time, the Grader takes the step 1 runs of another model as the base of the speedup, the model with the most such runs (a stronger model is expected), and marks this base for the mentors.
 
 | Agent | Skill directory in the run | What the log gives | How the Grader sees the skill call |
 |---|---|---|---|
@@ -140,7 +140,7 @@ So the OS and the way you start the agent are yours to choose, as long as the Gr
 | Codex | `.agents/skills/hr-assistant/` | answer, tokens; no model, time or cost: the time comes from `wall_seconds.txt`, the model from `agent.json` | Codex has no skill tool: a command that touches the skill directory (`skills/hr-assistant`) counts as using the skill |
 | OpenCode | `.opencode/skills/hr-assistant/` | answer, time (from the log timestamps), cost, tokens; the model comes from `agent.json` | its skill tool |
 
-A Codex log has no cost, so a Codex submission does not enter the leaderboard; the speedup is counted by time and works as usual.
+A Codex log has no cost. The score does not use the cost: the speedup is counted by time and works as usual.
 
 `run.sh` is a bash script that starts the agent named with `--agent`: `claude` (the default), `codex` or `opencode`. Where it works:
 - Claude Code: macOS, Linux and Windows inside WSL2. On Linux and in WSL2 install the packages `bubblewrap` and `socat` for the Claude Code sandbox; in WSL keep the solution folder in the WSL file system, not under `/mnt/c`, where file access is much slower;
@@ -202,7 +202,7 @@ Good to know:
 - Codex and OpenCode have no budget cap: a run is stopped after `HW02_TIMEOUT_SECONDS` seconds, 900 by default (`HW02_TIMEOUT_SECONDS=1800 ./run.sh ...` changes it);
 - OpenCode is isolated less than the other two: its bash tool has no OS sandbox, so it can read files outside the run and reach the network. It also sees your environment variables, an API key included, and a model may print them into the log, which goes into the archive. Do not keep secrets in the environment of a run;
 - if a newer Codex refuses a flag of `run.sh`, the run ends at once with an empty log, and `run.sh` prints the version it was tested with next to yours;
-- without the skill Codex and OpenCode sometimes do not put the JSON into the final message (Codex once wrote it to a file). The Grader reads only the final message, so such a step 1 run cannot be the base of the speedup: `run.sh` and `check_answer.py` warn about it;
+- without the skill Codex and OpenCode sometimes do not put the JSON into the final message (Codex once wrote it to a file). The Grader reads only the final message, so such a step 1 run cannot be the base of the speedup, though it still counts for the process part: `run.sh` and `check_answer.py` warn about it. One valid step 1 run with a JSON object is enough for the base, three are safer. If the base model gives no JSON without the skill at all, add step 1 runs of a stronger model to the archive, so that the speedup has a base;
 - a failed run: delete its directory in `runs/` (its working copy in `HW02_RUNS_DIR` may go too) and start the next number; the submission holds exactly three `skill_*` runs;
 - do not start runs in parallel in one `HW02_RUNS_DIR`: a run closes only the run directories that exist when it starts;
 - the working copies in `HW02_RUNS_DIR` (`~/hw02_runs` by default) may be deleted once a run is over: each run copies the data, about 100 MB where the file system cannot clone files. After that pass the data to the check yourself: `python3 check_answer.py runs/skill_haiku_r1/log.jsonl --data data/`;
@@ -281,8 +281,10 @@ Only remarks in `test_skill_diagnostics`, the score does not change:
 | `test_process` | 0.1 | step 1: the share of valid runs of the base model, up to three; a valid run has a readable log with one session and a model id, finished with success, had no skill and is not a copy of another run |
 | `test_skills` | 0.4 | question 1, skills: the mean Skills of the three runs of step 3 |
 | `test_remote` | 0.3 | question 2, available to me: the mean Remote of the three runs of step 3 |
-| `test_speedup` | 0.2 | the full weight if the median time of the valid step 1 runs of the base model (with a JSON object in the answer) divided by the median time of step 3 is 3 or more, and the mean Q = (Skills + Remote) / 2 of step 3 is at least 0.6; otherwise 0 |
-| `test_runs_summary`, `test_skill_diagnostics`, `test_calibration` | 0 | details for you: validity, time, cost, turns and tokens of every run; Q, Skills and Remote, rounded to 0.05, for the runs of step 3 and the calibration runs only; the remarks on the skill and on the layout. For the runs of step 1 (`noskill_*`) Q, Skills and Remote go to the mentors' report only: step 1 is not graded on quality, and these numbers would let one probe the hidden reference |
+| `test_speedup` | 0.2 | the full weight if the median time of the base divided by the median time of step 3 is 3 or more, and the mean Q = (Skills + Remote) / 2 of step 3 is at least 0.6; otherwise 0. The base is the valid step 1 runs with a JSON object in the final answer and a run time: those of the step 3 model, or, if it has none, of the model with the most such runs. One run is enough |
+| `test_skill_diagnostics` | 0 | remarks for you, shown only when there are any: the layout of the archive and `draft_*` runs, remarks on `SKILL.md`, numbers in the skill that look like HN post ids, invalid step 1 runs with the reasons, step 3 runs off the answer contract or with skill names outside the reference, step 1 runs over the reading limit (6 runs of the step 3 model and 6 of the other models). The reasons of a partial score are here too |
+
+The report lists every check with its score, and only a failed check carries a text with the reasons. A weighted check fails only at 0; at a partial score it passes, its share shows as `raw_score`, and the reasons are in `test_skill_diagnostics`. While the checks pass, the report shows no time, cost or speedup of your runs: the numbers of the speedup (the speedup, the median times of steps 1 and 3, the model and the size of the base) appear only in a failed `test_speedup`. The Grader does not grade or report the calibration runs (`calib_*`): compare your calibration run with `calibration_2024.json` in your own eval.
 
 How Skills and Remote are computed, and what zeroes each part, is in section 3.4 of the assignment.
 
