@@ -11,6 +11,8 @@ The check reads the archive without unpacking it and reports on three levels:
 - errors: the Grader rejects the whole archive, the score is 0;
 - zeroed: the archive is accepted, but Skills, Remote and the speedup get 0;
 - warnings: the archive is accepted, a part of the score may suffer.
+SKILL.md is checked against the standard by skills-ref, the validator of agentskills.io, when it is installed:
+only SKILL.md is copied into a temporary directory for it. Without skills-ref that check is skipped.
 It knows nothing about the quality of the answers: check_answer.py and your eval do.
 """
 import argparse
@@ -21,9 +23,12 @@ import math
 import os
 import posixpath
 import re
+import shutil
 import statistics
 import stat
+import subprocess
 import sys
+import tempfile
 import zipfile
 import zlib
 
@@ -67,13 +72,22 @@ MAX_OTHER_STEP1_RUNS = 6
 SPEEDUP_MIN = 3.0
 SCRIPT_MARKER = "scripts/"
 
-# Agent Skills: the frontmatter of SKILL.md
-MAX_DESCRIPTION_CHARS = 1024
+# Agent Skills: the standard check of SKILL.md is skills-ref, the reference validator of agentskills.io, at the
+# commit the Grader follows. It is run as a program: its YAML parser is not in the standard library.
+SKILLS_REF = "skills-ref"
+SKILLS_REF_INSTALL = ('uv tool install "git+https://github.com/agentskills/agentskills'
+                      '@83021e2be457a9b6679148719c1f6074f0ad975e#subdirectory=skills-ref"')
+SKILLS_REF_TIMEOUT_SECONDS = 30
+SKILLS_REF_FAILED = "Validation failed"
+SKILLS_REF_ERROR_PREFIX = "  - "
+SKILLS_REF_RECURSION = "RecursionError"
+FRONTMATTER_DELIMITER = "---"
+# the Grader refuses a longer frontmatter before parsing it: the parser is slow on a large one
+MAX_FRONTMATTER_LINES = 200
+MAX_FRONTMATTER_BYTES = 16 * 1024
+# remarks only: the standard recommends a shorter SKILL.md, and skills-ref checks neither this nor the files
 MAX_SKILL_MD_LINES = 500
-MAX_FRONTMATTER_LINE_CHARS = 2000
-FRONTMATTER_FIELDS = ("name", "description", "license", "compatibility", "metadata", "allowed-tools")
-FRONTMATTER_RE = re.compile(r"^---[ \t]*\n(.*?)\n---[ \t]*(?:\n|$)", re.S)
-FRONTMATTER_FIELD_RE = re.compile(r"^([\w-]+):\s*(.*)$")
+NAME_FIELD_RE = re.compile(r"^name:(.*)$")
 QUOTED_SCALAR_RE = re.compile(r"""^(["'])(.*?)\1\s*(?:#.*)?$""")
 BYTE_ORDER_MARK = "\ufeff"
 # a path of the skill, not a part of a URL such as https://github.com/org/repo/scripts/x.py
@@ -93,6 +107,8 @@ class Report:
         self.warnings = []
         self.notes = []
         self.lines = []
+        # why the standard check of SKILL.md did not run, None when skills-ref ran
+        self.skipped_standard = None
 
 
 def listed(names):
@@ -302,48 +318,60 @@ def frontmatter_scalar(value):
     return stripped
 
 
-def unquote(value):
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        return value[1:-1]
-    return value
-
-
 def frontmatter_block(text):
-    """The text between the --- lines at the start of SKILL.md, None without one; CRLF and a BOM accepted."""
-    without_bom = text.lstrip(BYTE_ORDER_MARK)
-    normalized = without_bom.replace("\r\n", "\n")
-    front = FRONTMATTER_RE.match(normalized)
-    block = front.group(1) if front else None
-    return block
+    """(the frontmatter, None) or (None, the problem), split as skills-ref and the Grader split SKILL.md.
 
-
-def parse_frontmatter(lines):
-    """Fields of the frontmatter lines, read as the Grader reads them.
-
-    A lenient line reader: indented lines continue the previous field, so folded and literal
-    descriptions work.
+    The text starts with ---, and the next --- closes the frontmatter wherever it stands, even inside a value.
+    A byte order mark is not stripped: skills-ref and the Grader refuse such a file.
     """
-    fields, current = {}, None
-    for line in lines:
-        match = FRONTMATTER_FIELD_RE.match(line)
+    if text.startswith(BYTE_ORDER_MARK):
+        return None, f"{SKILL_MD} starts with a byte order mark (BOM) before ---: save it as UTF-8 without BOM"
+    if not text.startswith(FRONTMATTER_DELIMITER):
+        return None, f"{SKILL_MD} must start with the YAML frontmatter (---)"
+    parts = text.split(FRONTMATTER_DELIMITER, 2)
+    part_count = len(parts)
+    if part_count < 3:
+        return None, f"the frontmatter of {SKILL_MD} is not closed with ---"
+    block = parts[1]
+    return block, None
+
+
+def frontmatter_size_problem(block):
+    """Why the Grader refuses the frontmatter before parsing it, None when it is small enough."""
+    lines = block.splitlines()
+    line_count = len(lines)
+    encoded = block.encode("utf-8")
+    size = len(encoded)
+    if line_count <= MAX_FRONTMATTER_LINES and size <= MAX_FRONTMATTER_BYTES:
+        return None
+    problem = (f"the frontmatter of {SKILL_MD} is too long: {line_count} lines, {size} bytes; at most "
+               f"{MAX_FRONTMATTER_LINES} lines and {MAX_FRONTMATTER_BYTES} bytes")
+    return problem
+
+
+def frontmatter_name(block):
+    """The value of name in its usual forms (plain with a comment, quoted, folded over lines); None without one.
+
+    Only the exact name of the assignment is compared with it: skills-ref checks the YAML itself.
+    """
+    name_parts = None
+    for line in block.splitlines():
+        if name_parts is not None:
+            if not line.startswith((" ", "\t")):
+                break
+            stripped_line = line.strip()
+            name_parts.append(stripped_line)
+            continue
+        match = NAME_FIELD_RE.match(line)
         if match:
-            current = match.group(1)
-            value = match.group(2)
-            fields[current] = value.strip()
-        elif current and line.startswith((" ", "\t")):
-            joined = fields[current] + " " + line.strip()
-            fields[current] = joined.strip()
-    return fields
-
-
-def description_of(fields):
-    raw = fields.get("description", "")
-    # a folded or literal block keeps its indicator ("> ", "|-") in front of the text
-    without_indicator = re.sub(r"^[>|][-+]?\s*", "", raw)
-    stripped = without_indicator.strip()
-    unquoted = unquote(stripped)
-    description = unquoted.strip()
-    return description
+            first = match.group(1)
+            name_parts = [first.strip()]
+    if name_parts is None:
+        return None
+    kept = [part for part in name_parts if part]
+    joined = " ".join(kept)
+    name = frontmatter_scalar(joined)
+    return name
 
 
 def missing_refs(text, skill_prefix, paths):
@@ -363,8 +391,68 @@ def missing_refs(text, skill_prefix, paths):
     return missing
 
 
+def skills_ref_validate(binary, content, dir_name):
+    """skills-ref validate on a copy of SKILL.md alone: (exit code, stderr). Raises OSError, TimeoutExpired.
+
+    The copy keeps the directory name of the archive: skills-ref compares it with the name field.
+    PYTHONUTF8 makes it read SKILL.md as UTF-8 on Windows too, not in the code page of the system.
+    """
+    with tempfile.TemporaryDirectory(prefix="hw02_skill_") as temp_dir:
+        skill_dir = os.path.join(temp_dir, dir_name)
+        os.mkdir(skill_dir)
+        md_fpath = os.path.join(skill_dir, SKILL_MD)
+        with open(md_fpath, "wb") as fout:
+            fout.write(content)
+        command = [binary, "validate", skill_dir]
+        env = dict(os.environ, PYTHONUTF8="1")
+        completed = subprocess.run(command, capture_output=True, timeout=SKILLS_REF_TIMEOUT_SECONDS, env=env,
+                                   check=False)
+    stderr = completed.stderr.decode("utf-8", errors="replace")
+    return completed.returncode, stderr
+
+
+def check_standard(content, dir_name, where, report):
+    """The standard check by skills-ref: its errors zero the parts; a missing or broken skills-ref only warns."""
+    binary = shutil.which(SKILLS_REF)
+    if binary is None:
+        report.warnings.append(f"skills-ref is not installed, the standard check of {SKILL_MD} was skipped "
+                               f"(the Grader does it); install it from git, not from PyPI: {SKILLS_REF_INSTALL}")
+        report.skipped_standard = "skills-ref is not installed"
+        return
+    try:
+        code, stderr = skills_ref_validate(binary, content, dir_name)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        code, stderr = None, error.__class__.__name__
+    if code == 0:
+        report.lines.append(f"{where}: skills-ref validate: valid")
+        return
+    if code == 1 and SKILLS_REF_FAILED in stderr:
+        lines = stderr.splitlines()
+        prefix_length = len(SKILLS_REF_ERROR_PREFIX)
+        errors = [line[prefix_length:] for line in lines if line.startswith(SKILLS_REF_ERROR_PREFIX)]
+        shown = errors or [SKILLS_REF_FAILED]
+        for error in shown:
+            report.zeroed.append(f"{where}: skills-ref: {error}")
+        return
+    stripped = stderr.strip()
+    stderr_lines = stripped.splitlines()
+    last_line = stderr_lines[-1] if stderr_lines else f"exit code {code}"
+    # the parser of skills-ref recurses on deep nesting: the fault of SKILL.md, not of the installation
+    if last_line.startswith(SKILLS_REF_RECURSION):
+        report.zeroed.append(f"{where}: the frontmatter of {SKILL_MD} is not valid YAML: {SKILLS_REF_RECURSION}, "
+                             f"the nesting is too deep")
+        return
+    report.warnings.append(f"skills-ref did not run ({last_line}), the standard check of {SKILL_MD} was skipped "
+                           f"(the Grader does it); reinstall it: {SKILLS_REF_INSTALL}")
+    report.skipped_standard = "skills-ref did not run"
+
+
 def check_skill(archive, members, report):
-    """The standard checks of skill/hr-assistant/: any problem zeroes Skills, Remote and the speedup."""
+    """skill/hr-assistant/: the requirements of the assignment and skills-ref; any problem zeroes the parts.
+
+    UTF-8 and the size of the frontmatter are checked first, as the Grader checks them before parsing.
+    A SKILL.md over 500 lines and a missing referenced file are only warnings.
+    """
     skill_parts = [path.split("/") for path in members if path.startswith(SKILL_DIR + "/")]
     if not skill_parts:
         report.zeroed.append(f"{SKILL_DIR}/{SKILL_NAME}/ is missing")
@@ -388,50 +476,45 @@ def check_skill(archive, members, report):
         report.zeroed.append(f"{where}: no {SCRIPTS_DIR}/, the final skill runs a script")
     md_path = f"{where}/{SKILL_MD}"
     if md_path not in members:
-        report.zeroed.append(f"{where}: no {SKILL_MD}")
+        lowered_md = md_path.lower()
+        other_case = [path for path in skill_files if path.lower() == lowered_md]
+        no_md = f"{where}: no {SKILL_MD}"
+        if other_case:
+            found_name = posixpath.basename(other_case[0])
+            no_md += f", found {found_name}"
+        report.zeroed.append(no_md)
         return
-    stream = text_stream(archive, members[md_path])
+    content = archive.read(members[md_path])
+    raw = io.BytesIO(content)
+    # the way the Grader reads it: UTF-8, lines end at \n, \r\n or \r, a byte order mark is kept
+    stream = io.TextIOWrapper(raw, encoding="utf-8")
     try:
         text = stream.read()
     except UnicodeDecodeError:
         report.zeroed.append(f"{where}: {SKILL_MD} is not UTF-8 text")
         return
-    block = frontmatter_block(text)
-    if block is None:
-        report.zeroed.append(f"{where}: {SKILL_MD} has no frontmatter between --- lines")
-        return
-    block_lines = block.splitlines()
-    lengths = [len(line) for line in block_lines]
-    longest = max(lengths) if lengths else 0
-    if longest > MAX_FRONTMATTER_LINE_CHARS:
-        report.zeroed.append(f"{where}: a frontmatter line of {SKILL_MD} is longer than "
-                             f"{MAX_FRONTMATTER_LINE_CHARS} characters")
-        return
-    fields = parse_frontmatter(block_lines)
-    name_field = fields.get("name", "")
-    name = frontmatter_scalar(name_field)
-    if dir_name != SKILL_NAME or name != SKILL_NAME:
-        report.zeroed.append(f'{where}: the skill must be {SKILL_DIR}/{SKILL_NAME}/ with "name: {SKILL_NAME}", '
-                             f'found the name "{name}"')
-    description = description_of(fields)
-    description_length = len(description)
-    if not 1 <= description_length <= MAX_DESCRIPTION_CHARS:
-        report.zeroed.append(f"{where}: description has {description_length} characters, "
-                             f"expected 1..{MAX_DESCRIPTION_CHARS}")
-    field_names, known_names = set(fields), set(FRONTMATTER_FIELDS)
-    unknown_names = field_names - known_names
-    unknown = sorted(unknown_names)
-    if unknown:
-        allowed = ", ".join(FRONTMATTER_FIELDS)
-        report.zeroed.append(f"{where}: unknown frontmatter fields {unknown}, allowed: {allowed}")
     lines = text.splitlines()
     line_count = len(lines)
     if line_count > MAX_SKILL_MD_LINES:
-        report.zeroed.append(f"{where}: {SKILL_MD} has {line_count} lines, at most {MAX_SKILL_MD_LINES}")
+        report.warnings.append(f"{where}: {SKILL_MD} has {line_count} lines, the standard recommends at most "
+                               f"{MAX_SKILL_MD_LINES}")
     path_set = set(members)
     missing = missing_refs(text, where, path_set)
     for ref in missing:
-        report.zeroed.append(f"{where}: {SKILL_MD} refers to a missing file {ref}")
+        report.warnings.append(f"{where}: {SKILL_MD} refers to a missing file {ref}")
+    block, problem = frontmatter_block(text)
+    if block is not None:
+        problem = frontmatter_size_problem(block)
+    if problem:
+        report.zeroed.append(f"{where}: {problem}")
+        return
+    name = frontmatter_name(block)
+    # exactly: "hr-assistant " or full-width letters pass skills-ref, not the assignment
+    if dir_name != SKILL_NAME or name != SKILL_NAME:
+        shown_name = name or ""
+        report.zeroed.append(f'{where}: the skill must be {SKILL_DIR}/{SKILL_NAME}/ with "name: {SKILL_NAME}", '
+                             f'found the name "{shown_name}"')
+    check_standard(content, dir_name, where, report)
 
 
 def note_hn_ids(archive, members, report):
@@ -985,6 +1068,9 @@ def print_report(report):
     if report.zeroed:
         print("result: ZEROED")
         return 1
+    if report.skipped_standard:
+        print(f"result: OK, the standard check was skipped: {report.skipped_standard}")
+        return 0
     warning_count = len(report.warnings)
     print(f"result: OK, {warning_count} warnings")
     return 0
