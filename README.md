@@ -126,7 +126,13 @@ Starter files: [hw02_skill_hr_assistant](hw02_skill_hr_assistant)
 
 `check_answer.py`, `make_calib_data.py` and `pack.py` need Python 3 with its standard library only and work on any OS (on Windows the command is often `py` or `python` instead of `python3`).
 
-The skill follows the open Agent Skills standard and does not depend on the agent: you may work in Claude Code, Codex or OpenCode, further agents are added on request. `run.sh` starts all three, and the Grader reads the logs of all three; submission in learn opens together with the automatic check. The Grader does not run models or your code: it reads the skill in `skill/hr-assistant/` and the files of each run in `runs/<stage>_<model>_r<number>/`: `log.jsonl`, `stderr.txt`, `wall_seconds.txt` and, for Codex and OpenCode, `agent.json`. So the OS and the way you start the agent are yours to choose, as long as the Grader can read the run. Do steps 1 and 3 in one agent with one model: different agents count as different models.
+The skill follows the open Agent Skills standard and does not depend on the agent: you may work in Claude Code, Codex or OpenCode, further agents are added on request. `run.sh` starts all three, and the Grader reads the logs of all three; submission in learn opens together with the automatic check.
+
+The Grader does not run models or your code. It reads:
+- the skill in `skill/hr-assistant/`;
+- the files of each run in `runs/<stage>_<model>_r<number>/`: `log.jsonl`, `stderr.txt`, `wall_seconds.txt` and, for Codex and OpenCode, `agent.json`.
+
+So the OS and the way you start the agent are yours to choose, as long as the Grader can read the run. Do steps 1 and 3 in one agent with one model: different agents count as different models.
 
 | Agent | Skill directory in the run | What the log gives | How the Grader sees the skill call |
 |---|---|---|---|
@@ -136,7 +142,10 @@ The skill follows the open Agent Skills standard and does not depend on the agen
 
 A Codex log has no cost, so a Codex submission does not enter the leaderboard; the speedup is counted by time and works as usual.
 
-`run.sh` is a bash script that starts the agent named with `--agent`: `claude` (the default), `codex` or `opencode`. With Claude Code it works on macOS, on Linux and on Windows inside WSL2. On Linux and in WSL2 install the packages `bubblewrap` and `socat` for the Claude Code sandbox; in WSL keep the solution folder in the WSL file system, not under `/mnt/c`, where file access is much slower. Codex and OpenCode were tested on macOS only: codex-cli 0.153.0-alpha.5 (ChatGPT login, `gpt-5.6-luna` and `gpt-5.6-terra`) and OpenCode 1.18.30 (an Anthropic key, `anthropic/claude-haiku-4-5`). On Linux and in WSL `run.sh` starts them with a "not tested on this OS" note. Native Windows without WSL is not covered: use WSL.
+`run.sh` is a bash script that starts the agent named with `--agent`: `claude` (the default), `codex` or `opencode`. Where it works:
+- Claude Code: macOS, Linux and Windows inside WSL2. On Linux and in WSL2 install the packages `bubblewrap` and `socat` for the Claude Code sandbox; in WSL keep the solution folder in the WSL file system, not under `/mnt/c`, where file access is much slower;
+- Codex and OpenCode: tested on macOS only, with codex-cli 0.153.0-alpha.5 (ChatGPT login, `gpt-5.6-luna` and `gpt-5.6-terra`) and OpenCode 1.18.30 (an Anthropic key, `anthropic/claude-haiku-4-5`). On Linux and in WSL `run.sh` starts them with a "not tested on this OS" note;
+- native Windows without WSL is not covered: use WSL.
 
 ### Setup
 
@@ -211,14 +220,59 @@ python3 pack.py --check HW02_Dral_Alexey.zip
 
 On Windows first delete the `__pycache__` folders and move the `draft_*` runs out of `runs/` into another folder, then select only `skill` and `runs` and choose Send to > Compressed (zipped) folder.
 
-Or build and check in one go: `python3 pack.py Dral Alexey`. It packs `skill/hr-assistant/` and the runs `noskill_*`, `skill_*`, `calib_*` from `runs/` with their run files (`log.jsonl`, `stderr.txt`, `wall_seconds.txt` and, for Codex and OpenCode, `agent.json`), and leaves out `draft_*`, the data and service files. Do not put `draft_*` runs into a hand-made archive either.
+Or build and check in one go:
+
+```bash
+python3 pack.py Dral Alexey
+```
+
+It packs `skill/hr-assistant/` and the runs `noskill_*`, `skill_*`, `calib_*` from `runs/` with their run files (`log.jsonl`, `stderr.txt`, `wall_seconds.txt` and, for Codex and OpenCode, `agent.json`), and leaves out `draft_*`, the data and service files. Do not put `draft_*` runs into a hand-made archive either.
 
 `pack.py --check` repeats the checks of the Grader and reports on three levels:
 - errors: the Grader rejects the whole archive, the score is 0 (over 3 MB, a path outside the archive, a symbolic link, a forbidden extension, no `runs/`, ...);
 - zeroed: the archive is accepted, but Skills, Remote and the speedup get 0 (the skill does not pass `skills-ref validate` or the requirements of the assignment: the directory, `name: hr-assistant`, a non-empty `scripts/`; not three `skill_*` runs; the skill or its script was not called, ...);
 - warnings: a part of the score may suffer (fewer than three valid `noskill_*` runs of the base model, service files, ...).
 
-Check the skill against the standard with `skills-ref`, the reference validator of agentskills.io: `skills-ref validate skill/hr-assistant`. Install it from git only, at the commit the Grader follows: `uv tool install "git+https://github.com/agentskills/agentskills@83021e2be457a9b6679148719c1f6074f0ad975e#subdirectory=skills-ref"` (it needs Python 3.11+, uv brings it; if `skills-ref` is not found afterwards, run `uv tool update-shell`); the package of the same name on PyPI is not maintained by the authors of the standard. On Windows set `PYTHONUTF8=1` first (`$env:PYTHONUTF8=1` in PowerShell, `set PYTHONUTF8=1` in cmd): otherwise `skills-ref` reads `SKILL.md` in the code page of the system and fails on non-English text. The Grader zeroes Skills, Remote and the speedup on everything `skills-ref` reports (frontmatter that is not valid YAML, the `name` and `description` rules, a `description` over 1024 characters, a `compatibility` over 500, a field other than `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`) and on the requirements of the assignment: the directory `skill/hr-assistant/` with `SKILL.md`, `name: hr-assistant`, a non-empty `scripts/`. A `description` with ": " inside must be quoted, otherwise the frontmatter is not valid YAML: some agents still load such a skill, `skills-ref` and the Grader do not accept it. The same holds for lists in brackets such as `allowed-tools: [Bash, Read]` and for a byte order mark at the start of `SKILL.md` (PowerShell 5.1 writes one with `-Encoding UTF8`). Two things are only remarks in `test_skill_diagnostics`: a `SKILL.md` longer than 500 lines (the standard recommends moving details to `references/`) and a file `scripts/...`, `references/...` or `assets/...` named in `SKILL.md` but missing in the skill.
+#### Check the skill with `skills-ref`
+
+`skills-ref` is the reference validator of agentskills.io. Install it from git only, at the commit the Grader follows: the package of the same name on PyPI is not maintained by the authors of the standard.
+
+```bash
+uv tool install "git+https://github.com/agentskills/agentskills@83021e2be457a9b6679148719c1f6074f0ad975e#subdirectory=skills-ref"
+```
+
+It needs Python 3.11+, uv brings it. If `skills-ref` is not found afterwards, run `uv tool update-shell`.
+
+On Windows set `PYTHONUTF8=1` first, otherwise `skills-ref` reads `SKILL.md` in the code page of the system and fails on non-English text:
+- PowerShell: `$env:PYTHONUTF8=1`;
+- cmd: `set PYTHONUTF8=1`.
+
+Check the skill:
+
+```bash
+skills-ref validate skill/hr-assistant
+```
+
+The Grader zeroes Skills, Remote and the speedup on:
+- everything `skills-ref` reports:
+  - frontmatter that is not valid YAML;
+  - the `name` and `description` rules;
+  - a `description` over 1024 characters, a `compatibility` over 500;
+  - a field other than `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`;
+- the requirements of the assignment: the directory `skill/hr-assistant/` with `SKILL.md`, `name: hr-assistant`, a non-empty `scripts/`.
+
+Some agents still load a skill with these mistakes, but `skills-ref` and the Grader do not accept it:
+- a `description` with ": " inside and without quotes: the frontmatter is then not valid YAML;
+- lists in brackets, such as `allowed-tools: [Bash, Read]`;
+- a byte order mark at the start of `SKILL.md`: PowerShell 5.1 writes one with `-Encoding UTF8`.
+
+```yaml
+description: "Job market analysis: skills and remote vacancies"   # quoted, valid
+```
+
+Only remarks in `test_skill_diagnostics`, the score does not change:
+- a `SKILL.md` longer than 500 lines: the standard recommends moving details to `references/`;
+- a file `scripts/...`, `references/...` or `assets/...` named in `SKILL.md` but missing in the skill.
 
 ### Grading
 
