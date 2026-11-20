@@ -5,8 +5,10 @@ There is no etalon here: OK says the answer is well formed, not that its numbers
 How right they are shows your own eval on the calibration data (3.2.8 of the assignment).
 Step 1 (noskill) is not graded on its answer: there OK says the run is valid, the form is for information.
 
-The final JSON is the last ```json block of the agent's final answer (the result event of the log);
-without such a block, the whole answer if it is one JSON object. The Grader takes it the same way.
+The final JSON is the last ```json block of the agent's final answer; without such a block, the whole
+answer if it is one JSON object. The Grader takes it the same way. The final answer of Claude Code is its
+result event, of Codex its last agent_message, of OpenCode the text of its last step that stopped. Codex
+and OpenCode name no model in the log: agent.json next to the log does (run.sh writes it).
 """
 import argparse
 import collections
@@ -19,6 +21,16 @@ import sys
 STAGES = ("noskill", "draft", "skill", "calib")
 WITH_SKILL = ("draft", "skill", "calib")
 SKILL_NAME = "hr-assistant"
+AGENT_CLAUDE = "claude"
+AGENT_CODEX = "codex"
+AGENT_OPENCODE = "opencode"
+AGENTS = (AGENT_CLAUDE, AGENT_CODEX, AGENT_OPENCODE)
+AGENT_FILENAME = "agent.json"
+MAX_AGENT_FILE_BYTES = 4 * 1024
+RUN_SUCCESS = "success"
+# Codex has no skill tool: a command inside the skill directory uses the skill; no trailing slash, so
+# "cd .agents/skills/hr-assistant && python3 scripts/x.py" counts too
+SKILL_DIR_MARKER = f"skills/{SKILL_NAME}"
 RUN_DIR_RE = re.compile(r"^(?P<stage>[^_]+)_(?P<model>.+)_r(?P<number>[0-9]+)$")
 JSON_BLOCK_RE = re.compile(r"```json\s*(.*?)```", re.S)
 DATA_FILE_RE = re.compile(r"^hn_whoishiring_(?P<month>\d{4}-\d{2})\.json$")
@@ -30,6 +42,7 @@ WINDOW_MONTHS = 12
 MAX_NAME_CHARS = 100
 NOSKILL_NOTE = ("step 1 is not graded on quality; the run counts for the process and the speedup base "
                 "if the agent finished and returned a JSON object")
+NO_JSON_WARNING = "warning: the final message has no JSON: this run cannot be the speedup base"
 
 
 # ---------------------------------------------------------------- the log
@@ -82,6 +95,211 @@ def extract_answer(result_text):
     return answer, source
 
 
+# ---------------------------------------------------------------- the agent of the log
+
+def is_claude_event(event):
+    marked = event.get("type") == "system" and event.get("subtype") == "init"
+    return marked
+
+
+def is_codex_event(event):
+    marked = event.get("type") == "thread.started"
+    return marked
+
+
+def is_opencode_event(event):
+    """Every OpenCode event carries sessionID and a part; its error event carries sessionID and no part."""
+    if "sessionID" not in event:
+        return False
+    marked = "part" in event or event.get("type") == "error"
+    return marked
+
+
+AGENT_MARKS = ((AGENT_CLAUDE, is_claude_event), (AGENT_CODEX, is_codex_event), (AGENT_OPENCODE, is_opencode_event))
+
+
+def log_agent(events):
+    """The agent of a log by the marks of its format, Claude Code without any; ValueError for two agents."""
+    agents = [agent for agent, recognize in AGENT_MARKS if any(recognize(event) for event in events)]
+    if len(agents) > 1:
+        joined = ", ".join(agents)
+        raise ValueError(f"events of several agents in one log: {joined}")
+    agent = agents[0] if agents else AGENT_CLAUDE
+    return agent
+
+
+def agent_key_problem(raw, key, kind):
+    """What breaks one required string key of agent.json, None when it holds: the reason names the key."""
+    if key not in raw:
+        return f'no "{key}"'
+    value = raw[key]
+    if not isinstance(value, str):
+        return f'"{key}" must be {kind}'
+    if not is_clean(value):
+        return f'"{key}" holds a lone surrogate escape'
+    if key == "model" and value.strip() == "":
+        return f'"{key}" is empty'
+    return None
+
+
+def agent_file_fields(content):
+    """(the fields of agent.json, None) or (None, why the Grader cannot read the run), in the order of the Grader."""
+    bad = f"bad {AGENT_FILENAME}, the Grader cannot read this run"
+    if len(content) > MAX_AGENT_FILE_BYTES:
+        return None, f"{bad}: over {MAX_AGENT_FILE_BYTES // 1024} KB"
+    try:
+        text = content.decode("utf-8")
+        raw = json.loads(text)
+    except (ValueError, RecursionError):
+        return None, f"{bad}: not valid JSON"
+    if not isinstance(raw, dict):
+        return None, f"{bad}: not a JSON object"
+    supported = ", ".join(AGENTS)
+    agent_problem = agent_key_problem(raw, "agent", f"one of {supported}")
+    if agent_problem:
+        return None, f"{bad}: {agent_problem}"
+    agent = raw["agent"]
+    if agent not in AGENTS:
+        return None, f"{AGENT_FILENAME} names an unknown agent {agent!r}, supported: {supported}"
+    for field in ("model", "agent_version"):
+        field_problem = agent_key_problem(raw, field, "a string")
+        if field_problem:
+            return None, f"{bad}: {field_problem}"
+    fields = {"agent": agent, "model": raw["model"], "version": raw["agent_version"]}
+    return fields, None
+
+
+def read_agent_file(log_fpath):
+    """(agent.json next to the log or None, the problem or None): the rules of the Grader for the file."""
+    log_dir = os.path.dirname(os.path.abspath(log_fpath))
+    fpath = os.path.join(log_dir, AGENT_FILENAME)
+    if not os.path.exists(fpath):
+        return None, None
+    try:
+        with open(fpath, "rb") as fin:
+            content = fin.read(MAX_AGENT_FILE_BYTES + 1)
+    except OSError:
+        return None, f"bad {AGENT_FILENAME}, the Grader cannot read this run: cannot be read"
+    agent_file, problem = agent_file_fields(content)
+    return agent_file, problem
+
+
+def dict_of(value):
+    found = value if isinstance(value, dict) else {}
+    return found
+
+
+def session_ids(events, key):
+    """The session ids of a log under one key: session_id of Claude Code, sessionID of OpenCode."""
+    sessions = set()
+    for event in events:
+        session = event.get(key)
+        if isinstance(session, str) and session:
+            sessions.add(session)
+    return sessions
+
+
+def claude_run(events):
+    """A claude -p log: the result event is the final answer, the init event names the model and the skills."""
+    results = [event for event in events if event.get("type") == "result"]
+    result = results[-1] if results else {}
+    raw_text = result.get("result")
+    inits = [event for event in events if is_claude_event(event)]
+    init = inits[0] if inits else {}
+    raw_skills = init.get("skills")
+    skills = raw_skills if isinstance(raw_skills, list) else []
+    sessions = session_ids(events, "session_id")
+    run = {"finished": bool(results), "subtype": result.get("subtype"),
+           "final_text": raw_text if isinstance(raw_text, str) else "", "model": init.get("model"),
+           "session_count": len(sessions), "skill_available": SKILL_NAME in skills, "skill_used": False}
+    return run
+
+
+def codex_run(events):
+    """A codex exec --json log: the last agent_message is the final answer, turn.failed fails the run.
+
+    The log names no model; a command inside the skill directory uses the skill.
+    """
+    items = []
+    for event in events:
+        if event.get("type") == "item.completed":
+            raw_item = event.get("item")
+            item = dict_of(raw_item)
+            items.append(item)
+    messages = [item for item in items if item.get("type") == "agent_message"]
+    raw_text = messages[-1].get("text") if messages else ""
+    used = False
+    for item in items:
+        if item.get("type") == "command_execution":
+            raw_command = item.get("command", "")
+            command = str(raw_command)
+            used = used or SKILL_DIR_MARKER in command
+    failed = any(event.get("type") == "turn.failed" for event in events)
+    completed = any(event.get("type") == "turn.completed" for event in events)
+    if failed:
+        subtype = "turn_failed"
+    elif not completed:
+        subtype = "no_turn_completed"
+    else:
+        subtype = RUN_SUCCESS
+    threads = [event for event in events if is_codex_event(event)]
+    run = {"finished": failed or completed, "subtype": subtype,
+           "final_text": raw_text if isinstance(raw_text, str) else "", "model": None,
+           "session_count": len(threads), "skill_available": None, "skill_used": used}
+    return run
+
+
+def opencode_run(events):
+    """An opencode run --format json log: the final answer is the text of the last step that stopped.
+
+    The log names no model; the skill tool or a command inside the skill directory uses the skill.
+    """
+    finishes = []
+    for event in events:
+        if event.get("type") == "step_finish":
+            raw_part = event.get("part")
+            part = dict_of(raw_part)
+            finishes.append(part)
+    stops = [part for part in finishes if part.get("reason") == "stop"]
+    stop_message = stops[-1].get("messageID") if stops else None
+    texts, used = [], False
+    for event in events:
+        raw_part = event.get("part")
+        part = dict_of(raw_part)
+        if event.get("type") == "text" and stop_message is not None and part.get("messageID") == stop_message:
+            text = part.get("text")
+            kept_text = text if isinstance(text, str) else ""
+            texts.append(kept_text)
+        if event.get("type") != "tool_use":
+            continue
+        raw_state = part.get("state")
+        state = dict_of(raw_state)
+        raw_input = state.get("input")
+        tool_input = dict_of(raw_input)
+        raw_command = tool_input.get("command", "")
+        command = str(raw_command)
+        skill_names = (tool_input.get("name"), tool_input.get("id"))
+        called = part.get("tool") == "skill" and SKILL_NAME in skill_names
+        ran = part.get("tool") == "bash" and SKILL_DIR_MARKER in command
+        used = used or called or ran
+    failed = any(event.get("type") == "error" for event in events)
+    stopped = bool(finishes) and finishes[-1].get("reason") == "stop"
+    if failed:
+        subtype = "error"
+    elif not stopped:
+        subtype = "not_stopped"
+    else:
+        subtype = RUN_SUCCESS
+    sessions = session_ids(events, "sessionID")
+    final_text = "".join(texts)
+    run = {"finished": failed or bool(finishes), "subtype": subtype, "final_text": final_text, "model": None,
+           "session_count": len(sessions), "skill_available": None, "skill_used": used}
+    return run
+
+
+AGENT_RUNS = {AGENT_CLAUDE: claude_run, AGENT_CODEX: codex_run, AGENT_OPENCODE: opencode_run}
+
+
 # ---------------------------------------------------------------- the contract of the prompt
 
 def is_number(value):
@@ -102,8 +320,22 @@ def long_keys(mapping):
     return keys
 
 
-def prompt_contract_problems(answer, stage):
+def answer_state(answer, source):
+    """Where the final JSON was found; a ```json block that gives no object says so instead."""
+    if source is None:
+        return "no JSON object found"
+    if answer is None:
+        return f"{source} is not valid JSON"
+    if not isinstance(answer, dict):
+        return f"{source} is not a JSON object"
+    return source
+
+
+def prompt_contract_problems(answer, stage, source=None):
     """The form the prompt asks for, the same for every stage."""
+    if not isinstance(answer, dict) and source is not None:
+        state = answer_state(answer, source)
+        return [state]
     if not isinstance(answer, dict):
         return ["no JSON object in the final answer: put it into a ```json block at the end"]
     problems = []
@@ -339,32 +571,64 @@ def print_skills(answer):
         print(f"  {'?':>7}  {name}: {skills[name]!r}")
 
 
-def step1_reasons(events, result):
+def agent_problems(agent, agent_file, agent_problem):
+    """Why the Grader cannot read the run at all: a bad agent.json or one of another agent."""
+    if agent_problem:
+        return [agent_problem]
+    if agent_file is not None and agent_file["agent"] != agent:
+        mismatch = f"a {agent} log, but {AGENT_FILENAME} names {agent_file['agent']}: the Grader cannot read this run"
+        return [mismatch]
+    return []
+
+
+def run_model(run, agent, agent_file):
+    """The model of the run: the init event of Claude Code, agent.json of Codex and OpenCode; None without it."""
+    model = run["model"] if agent == AGENT_CLAUDE else (agent_file or {}).get("model")
+    if not isinstance(model, str) or not model:
+        return None
+    return model
+
+
+def step1_reasons(run, agent, agent_file):
     """Why a run of step 1 does not count for the process, by the rules of the Grader for a valid run.
 
     The Grader also drops a run whose log is a copy of another run: pack.py --check compares the runs.
     """
     reasons = []
-    if result.get("subtype") != "success":
+    if run["subtype"] != RUN_SUCCESS:
         reasons.append("the run did not finish with success")
-    sessions = set()
-    for event in events:
-        session_id = event.get("session_id")
-        if isinstance(session_id, str) and session_id:
-            sessions.add(session_id)
-    session_count = len(sessions)
+    session_count = run["session_count"]
     if session_count != 1:
         reasons.append(f"{session_count} session ids in one log, expected 1")
-    inits = [event for event in events if event.get("type") == "system" and event.get("subtype") == "init"]
-    init = inits[0] if inits else {}
-    model = init.get("model")
-    if not isinstance(model, str) or not model:
+    model = run_model(run, agent, agent_file)
+    if model is None and agent == AGENT_CLAUDE:
         reasons.append("no model id in the log")
-    raw_skills = init.get("skills")
-    skills = raw_skills if isinstance(raw_skills, list) else []
-    if SKILL_NAME in skills:
+    elif model is None:
+        reasons.append(f"no model id: no {AGENT_FILENAME} next to the log")
+    if run["skill_available"]:
         reasons.append(f"the skill {SKILL_NAME} is available in a run without a skill")
+    if agent != AGENT_CLAUDE and run["skill_used"]:
+        reasons.append(f"the skill {SKILL_NAME} was used in a run without a skill")
     return reasons
+
+
+def agent_line(run, agent, agent_file, agent_problem):
+    """The agent and the model of the run for the report."""
+    model = run_model(run, agent, agent_file)
+    if agent == AGENT_CLAUDE:
+        line = f"{agent}, model {model or 'none'}"
+        return line
+    if agent_problem:
+        line = f"{agent}, no model: {AGENT_FILENAME} is not readable, see the problems"
+        return line
+    if agent_file is None or model is None:
+        line = f"{agent}, no model: no {AGENT_FILENAME} next to the log"
+        return line
+    if agent_file["agent"] != agent:
+        line = f"{agent}, but {AGENT_FILENAME} names {agent_file['agent']}"
+        return line
+    line = f"{agent}, model {model} ({AGENT_FILENAME}, version {agent_file['version']})"
+    return line
 
 
 def stage_from_path(log_fpath):
@@ -400,24 +664,28 @@ def main():
         sys.exit(f"error: cannot tell the stage from the directory of {args.log}: pass --stage")
     try:
         events = read_events(args.log)
+        agent = log_agent(events)
     except (OSError, UnicodeDecodeError, ValueError) as error:
         sys.exit(f"error: cannot read {args.log}: {error}")
-    results = [event for event in events if event.get("type") == "result"]
-    if not results:
-        print(f"{args.log}: no result event, the run did not finish")
+    agent_file, agent_problem = read_agent_file(args.log)
+    read_agent_run = AGENT_RUNS[agent]
+    run = read_agent_run(events)
+    if not run["finished"]:
+        missing = "no result event" if agent == AGENT_CLAUDE else f"no final event of {agent}"
+        print(f"{args.log}: {missing}, the run did not finish")
         print("FAIL")
         return 1
-    result = results[-1]
-    raw_text = result.get("result")
-    result_text = raw_text if isinstance(raw_text, str) else ""
-    answer, source = extract_answer(result_text)
-    subtype = result.get("subtype")
+    answer, source = extract_answer(run["final_text"])
+    shown_agent = agent_line(run, agent, agent_file, agent_problem)
     print(f"log:    {args.log}")
+    print(f"agent:  {shown_agent}")
     print(f"stage:  {stage}")
-    print(f"run:    {subtype}")
-    print(f"answer: {source or 'no JSON object found'}")
+    print(f"run:    {run['subtype']}")
+    shown_answer = answer_state(answer, source)
+    print(f"answer: {shown_answer}")
 
-    problems = prompt_contract_problems(answer, stage)
+    unreadable = agent_problems(agent, agent_file, agent_problem)
+    problems = prompt_contract_problems(answer, stage, source)
     posts, notes = {}, []
     if stage in WITH_SKILL and not problems:
         data_dir = find_data(args.log, args.data)
@@ -439,8 +707,9 @@ def main():
     for note in notes:
         print(f"note: {note}")
     if stage == "noskill":
-        code = report_step1(events, result, answer, problems)
+        code = report_step1(run, agent, agent_file, unreadable, answer, problems)
         return code
+    problems = unreadable + problems
     if problems:
         print("problems:")
         for problem in problems:
@@ -451,13 +720,13 @@ def main():
     return 0
 
 
-def report_step1(events, result, answer, problems):
+def report_step1(run, agent, agent_file, unreadable, answer, problems):
     """Step 1 is judged by the run, not by the form of its answer: the form is only for your information."""
     if problems:
         print(f"form of the answer (informational: {NOSKILL_NOTE}):")
         for problem in problems:
             print(f"  - {problem}")
-    reasons = step1_reasons(events, result)
+    reasons = unreadable or step1_reasons(run, agent, agent_file)
     if reasons:
         print("step 1: not a valid run, it does not count for the process and the speedup base:")
         for reason in reasons:
@@ -467,7 +736,8 @@ def report_step1(events, result, answer, problems):
     if isinstance(answer, dict):
         print("step 1: a valid run with a JSON object: it counts for the process and the speedup base")
     else:
-        print("step 1: a valid run without a JSON object: it counts for the process, not for the speedup base")
+        print(NO_JSON_WARNING)
+        print("step 1: a valid run: it counts for the process, not for the speedup base")
     print("OK")
     return 0
 

@@ -2,8 +2,9 @@
 """Build HW02_<Surname>_<Name>.zip and check an archive the way the Grader does. Optional.
 
 Build:  python3 pack.py <Surname> <Name> [--root .] [--runs-dir ./runs]
-        skill/hr-assistant/ and the runs noskill_*, skill_*, calib_* with their log.jsonl, stderr.txt and
-        wall_seconds.txt; draft_* and service files stay out. The built archive is checked right away.
+        skill/hr-assistant/ and the runs noskill_*, skill_*, calib_* with their log.jsonl, stderr.txt,
+        wall_seconds.txt and agent.json (Codex, OpenCode); draft_* and service files stay out. The built
+        archive is checked right away.
 Check:  python3 pack.py --check HW02_<Surname>_<Name>.zip
         an archive built by hand, with zip or "Compressed (zipped) folder" on Windows.
 
@@ -14,6 +15,7 @@ The check reads the archive without unpacking it and reports on three levels:
 SKILL.md is checked against the standard by skills-ref, the validator of agentskills.io, when it is installed:
 only SKILL.md is copied into a temporary directory for it. Without skills-ref that check is skipped.
 It knows nothing about the quality of the answers: check_answer.py and your eval do.
+Logs of Claude Code, Codex and OpenCode are read as the Grader reads them.
 """
 import argparse
 import collections
@@ -40,7 +42,8 @@ SCRIPTS_DIR = "scripts"
 ASSETS_DIR = "assets"
 LOG_FILENAME = "log.jsonl"
 WALL_SECONDS_FILENAME = "wall_seconds.txt"
-RUN_FILES = (LOG_FILENAME, "stderr.txt", WALL_SECONDS_FILENAME)
+AGENT_FILENAME = "agent.json"
+RUN_FILES = (LOG_FILENAME, "stderr.txt", WALL_SECONDS_FILENAME, AGENT_FILENAME)
 STAGE_NO_SKILL = "noskill"
 STAGE_SKILL = "skill"
 STAGE_CALIBRATION = "calib"
@@ -71,6 +74,22 @@ MAX_BASE_STEP1_RUNS = 6
 MAX_OTHER_STEP1_RUNS = 6
 SPEEDUP_MIN = 3.0
 SCRIPT_MARKER = "scripts/"
+RUN_SUCCESS = "success"
+
+# The agents of the runs. Codex and OpenCode name no model in their logs: run.sh writes agent.json next to
+# the log, and the model of such a run is "<agent>:<model>", so one model id of two agents is two models.
+AGENT_CLAUDE = "claude"
+AGENT_CODEX = "codex"
+AGENT_OPENCODE = "opencode"
+AGENTS = (AGENT_CLAUDE, AGENT_CODEX, AGENT_OPENCODE)
+MAX_AGENT_FILE_BYTES = 4 * 1024
+BAD_AGENT_FILE = f"bad {AGENT_FILENAME}"
+# Codex has no skill tool: a command inside the skill directory, reading SKILL.md or running its script, uses it;
+# no trailing slash, so "cd .agents/skills/hr-assistant && python3 scripts/x.py" counts too
+SKILL_DIR_MARKER = f"skills/{SKILL_NAME}"
+# the first event of a Codex log, looked for in the head of a log too big to read
+CODEX_MARK = b'"thread.started"'
+CODEX_MARK_BYTES = 4096
 
 # Agent Skills: the standard check of SKILL.md is skills-ref, the reference validator of agentskills.io, at the
 # commit the Grader follows. It is run as a program: its YAML parser is not in the standard library.
@@ -563,27 +582,130 @@ def read_events(stream):
     return events
 
 
-def init_model(archive, members, run_path):
-    """The model of the init event, read only up to it; None when there is no readable init."""
+def agent_key_problem(raw, key, kind):
+    """What breaks one required string key of agent.json, None when it holds: the reason names the key."""
+    if key not in raw:
+        return f'no "{key}"'
+    value = raw[key]
+    if not isinstance(value, str):
+        return f'"{key}" must be {kind}'
+    if not is_clean(value):
+        return f'"{key}" holds a lone surrogate escape'
+    if key == "model" and value.strip() == "":
+        return f'"{key}" is empty'
+    return None
+
+
+def read_agent_file(archive, members, run_path):
+    """agent.json of a run as {"agent", "model", "version"}, None without it; ValueError when it breaks the format.
+
+    The model is "<agent>:<model id>", as the Grader keys it: one model id of two agents is two models.
+    """
+    info = members.get(f"{run_path}/{AGENT_FILENAME}")
+    if info is None:
+        return None
+    content = archive.read(info)
+    size = len(content)
+    if size > MAX_AGENT_FILE_BYTES:
+        raise ValueError(f"{BAD_AGENT_FILE}: over {MAX_AGENT_FILE_BYTES // 1024} KB")
+    try:
+        text = content.decode("utf-8")
+        raw = json.loads(text)
+    except (ValueError, RecursionError) as error:
+        raise ValueError(f"{BAD_AGENT_FILE}: not valid JSON") from error
+    if not isinstance(raw, dict):
+        raise ValueError(f"{BAD_AGENT_FILE}: not a JSON object")
+    supported = ", ".join(AGENTS)
+    agent_problem = agent_key_problem(raw, "agent", f"one of {supported}")
+    if agent_problem:
+        raise ValueError(f"{BAD_AGENT_FILE}: {agent_problem}")
+    agent = raw["agent"]
+    if agent not in AGENTS:
+        raise ValueError(f"{AGENT_FILENAME} names an unknown agent {agent}, supported: {supported}")
+    for field in ("model", "agent_version"):
+        field_problem = agent_key_problem(raw, field, "a string")
+        if field_problem:
+            raise ValueError(f"{BAD_AGENT_FILE}: {field_problem}")
+    model = raw["model"]
+    version = raw["agent_version"]
+    agent_file = {"agent": agent, "model": f"{agent}:{model}", "version": version}
+    return agent_file
+
+
+def is_claude_event(event):
+    """The init event of claude -p; a log without any mark is read as a Claude Code log all the same."""
+    marked = event.get("type") == "system" and event.get("subtype") == "init"
+    return marked
+
+
+def is_codex_event(event):
+    marked = event.get("type") == "thread.started"
+    return marked
+
+
+def is_opencode_event(event):
+    """Every OpenCode event carries sessionID and a part; its error event carries sessionID and no part."""
+    if "sessionID" not in event:
+        return False
+    marked = "part" in event or event.get("type") == "error"
+    return marked
+
+
+def marked_agents(events):
+    """The agents whose marks the events carry, in the order of LOG_FORMATS."""
+    agents = []
+    for agent, (recognize, _) in LOG_FORMATS.items():
+        if any(recognize(event) for event in events):
+            agents.append(agent)
+    return agents
+
+
+def log_agent(events):
+    """The agent of a log by the marks of its format; marks of two agents make the log unreadable."""
+    agents = marked_agents(events)
+    if len(agents) > 1:
+        joined = ", ".join(agents)
+        raise ValueError(f"events of several agents in one log: {joined}")
+    agent = agents[0] if agents else AGENT_CLAUDE
+    return agent
+
+
+def run_model(archive, members, run_path):
+    """The model of a run before it is read: "" without a model id, None when the run cannot be read.
+
+    Claude Code names it in its init event, Codex and OpenCode in agent.json; the log is read only up to
+    its first marked event, as the Grader reads it to limit step 1.
+    """
     info = members.get(f"{run_path}/{LOG_FILENAME}")
     if info is None:
         return None
     stream = text_stream(archive, info)
+    agent, first = None, None
     try:
+        agent_file = read_agent_file(archive, members, run_path)
         for line in stream:
             if not line.strip():
                 continue
             event = json.loads(line)
             if not isinstance(event, dict):
                 return None
-            if event.get("type") == "system" and event.get("subtype") == "init":
-                model = event.get("model")
-                model_id = model if isinstance(model, str) else ""
-                found = model_id if is_clean(model_id) else None
-                return found
+            agents = marked_agents([event])
+            if agents:
+                agent, first = agents[0], event
+                break
     except (ValueError, RecursionError, MemoryError):
         return None
-    return None
+    if agent is None:
+        return None
+    if agent_file is not None and agent_file["agent"] != agent:
+        return None
+    if agent != AGENT_CLAUDE:
+        model = agent_file["model"] if agent_file else ""
+        return model
+    raw_model = first.get("model")
+    model_id = raw_model if isinstance(raw_model, str) else ""
+    found = model_id if is_clean(model_id) else None
+    return found
 
 
 def extract_answer(result_text):
@@ -605,6 +727,12 @@ def number_or_none(value):
     if not math.isfinite(value):
         return None
     return value
+
+
+def dict_of(value):
+    """A nested object of an event, {} when the log holds something else there."""
+    found = value if isinstance(value, dict) else {}
+    return found
 
 
 def tool_inputs(events):
@@ -633,6 +761,173 @@ def tool_inputs(events):
     return skill_calls, commands
 
 
+def parse_claude(events, _agent_file):
+    """A stream-json log of claude -p: the init and result events, tool calls; the model of the init event."""
+    inits = [event for event in events if is_claude_event(event)]
+    results = [event for event in events if event.get("type") == "result"]
+    if not inits:
+        raise ValueError("no init event")
+    if not results:
+        raise ValueError("no result event")
+    init, result = inits[0], results[-1]
+    sessions = set()
+    for event in events:
+        session_id = event.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            sessions.add(session_id)
+    raw_skills = init.get("skills")
+    skills = raw_skills if isinstance(raw_skills, list) else []
+    skill_names = [str(skill) for skill in skills]
+    skill_calls, commands = tool_inputs(events)
+    raw_text = result.get("result")
+    result_text = raw_text if isinstance(raw_text, str) else ""
+    model = init.get("model")
+    model_id = model if isinstance(model, str) else ""
+    raw_duration = result.get("duration_ms")
+    duration_ms = number_or_none(raw_duration)
+    seconds = duration_ms / 1000 if duration_ms and duration_ms > 0 else None
+    raw_cost = result.get("total_cost_usd")
+    cost = number_or_none(raw_cost)
+    subtype = result.get("subtype")
+    shown_subtype = str(subtype)
+    session_count = len(sessions)
+    only_session = min(sessions) if session_count == 1 else None
+    parsed = {"model": model_id, "subtype": shown_subtype, "session_count": session_count, "session": only_session,
+              "skills": skill_names, "skill_calls": skill_calls, "commands": commands, "final_text": result_text,
+              "seconds": seconds, "cost": cost}
+    return parsed
+
+
+def parse_codex(events, agent_file):
+    """A log of codex exec --json: the items of item.completed; no model, time or cost in it.
+
+    A top-level error event or an item of type error is a retry or a warning; turn.failed fails the run.
+    """
+    items = []
+    for event in events:
+        if event.get("type") == "item.completed":
+            raw_item = event.get("item")
+            item = dict_of(raw_item)
+            items.append(item)
+    messages = [item for item in items if item.get("type") == "agent_message"]
+    raw_text = messages[-1].get("text") if messages else ""
+    final_text = raw_text if isinstance(raw_text, str) else ""
+    commands = []
+    for item in items:
+        if item.get("type") == "command_execution":
+            command = item.get("command", "")
+            command_text = str(command)
+            commands.append(command_text)
+    skill_calls = [SKILL_NAME for command in commands if SKILL_DIR_MARKER in command]
+    turn_failed = any(event.get("type") == "turn.failed" for event in events)
+    turn_completed = any(event.get("type") == "turn.completed" for event in events)
+    if turn_failed:
+        subtype = "turn_failed"
+    elif not turn_completed:
+        subtype = "no_turn_completed"
+    else:
+        subtype = RUN_SUCCESS
+    # every thread.started is a session; its thread id names the session when there is exactly one
+    threads = [event.get("thread_id") for event in events if is_codex_event(event)]
+    session_count = len(threads)
+    thread_id = threads[0] if session_count == 1 else None
+    only_session = thread_id if isinstance(thread_id, str) and thread_id else None
+    model = agent_file["model"] if agent_file else ""
+    parsed = {"model": model, "subtype": subtype, "session_count": session_count, "session": only_session,
+              "skills": None, "skill_calls": skill_calls, "commands": commands, "final_text": final_text,
+              "seconds": None, "cost": None}
+    return parsed
+
+
+def opencode_seconds(events):
+    """The time between the first and the last event: OpenCode starts some seconds before its first event."""
+    stamps = []
+    for event in events:
+        raw_stamp = event.get("timestamp")
+        stamp = number_or_none(raw_stamp)
+        if stamp is not None:
+            stamps.append(stamp)
+    if len(stamps) < 2:
+        return None
+    seconds = (stamps[-1] - stamps[0]) / 1000
+    if seconds <= 0:
+        return None
+    return seconds
+
+
+def parse_opencode(events, agent_file):
+    """A log of opencode run --format json: the answer is the text of the message of the last stop."""
+    finishes = []
+    for event in events:
+        if event.get("type") == "step_finish":
+            raw_part = event.get("part")
+            part = dict_of(raw_part)
+            finishes.append(part)
+    stops = [part for part in finishes if part.get("reason") == "stop"]
+    stop_message = stops[-1].get("messageID") if stops else None
+    texts, skill_calls, commands = [], [], []
+    for event in events:
+        raw_part = event.get("part")
+        part = dict_of(raw_part)
+        if event.get("type") == "text" and stop_message is not None and part.get("messageID") == stop_message:
+            text = part.get("text")
+            kept_text = text if isinstance(text, str) else ""
+            texts.append(kept_text)
+        if event.get("type") != "tool_use":
+            continue
+        raw_state = part.get("state")
+        state = dict_of(raw_state)
+        raw_input = state.get("input")
+        tool_input = dict_of(raw_input)
+        if part.get("tool") == "skill":
+            skill = tool_input.get("name")
+            if skill is None:
+                skill = tool_input.get("id")
+            skill_name = str(skill)
+            skill_calls.append(skill_name)
+        elif part.get("tool") == "bash":
+            command = tool_input.get("command", "")
+            command_text = str(command)
+            commands.append(command_text)
+    failed = any(event.get("type") == "error" for event in events)
+    stopped = bool(finishes) and finishes[-1].get("reason") == "stop"
+    if failed:
+        subtype = "error"
+    elif not stopped:
+        subtype = "not_stopped"
+    else:
+        subtype = RUN_SUCCESS
+    costs = []
+    for part in finishes:
+        raw_cost = part.get("cost")
+        step_cost = number_or_none(raw_cost)
+        costs.append(step_cost or 0.0)
+    cost_sum = sum(costs)
+    sessions = set()
+    for event in events:
+        session_id = event.get("sessionID")
+        if isinstance(session_id, str) and session_id:
+            sessions.add(session_id)
+    session_count = len(sessions)
+    only_session = min(sessions) if session_count == 1 else None
+    final_text = "".join(texts)
+    seconds = opencode_seconds(events)
+    cost = float(cost_sum)
+    model = agent_file["model"] if agent_file else ""
+    parsed = {"model": model, "subtype": subtype, "session_count": session_count, "session": only_session,
+              "skills": None, "skill_calls": skill_calls, "commands": commands, "final_text": final_text,
+              "seconds": seconds, "cost": cost}
+    return parsed
+
+
+# agent -> (recognize an event of its log, parse its events): a fourth agent is one more entry
+LOG_FORMATS = {
+    AGENT_CLAUDE: (is_claude_event, parse_claude),
+    AGENT_CODEX: (is_codex_event, parse_codex),
+    AGENT_OPENCODE: (is_opencode_event, parse_opencode),
+}
+
+
 def wall_seconds(archive, members, run_path):
     """The run time from wall_seconds.txt of run.sh, for a log without one; None without it."""
     info = members.get(f"{run_path}/{WALL_SECONDS_FILENAME}")
@@ -652,66 +947,54 @@ def wall_seconds(archive, members, run_path):
 
 
 def parse_run(archive, members, run_path):
-    """The flags of a log as the Grader reads them; raises ValueError, UnicodeDecodeError on a broken log."""
+    """The flags of a log as the Grader reads them, by the parser of its agent; ValueError on a broken log.
+
+    A log of one agent with agent.json of another is unreadable. The time is the one of the log, else
+    wall_seconds.txt; a Codex log has neither a time nor a cost.
+    """
+    agent_file = read_agent_file(archive, members, run_path)
     info = members.get(f"{run_path}/{LOG_FILENAME}")
     if info is None:
         raise ValueError(f"no {LOG_FILENAME}")
     stream = text_stream(archive, info)
     events = read_events(stream)
-    inits = [event for event in events if event.get("type") == "system" and event.get("subtype") == "init"]
-    results = [event for event in events if event.get("type") == "result"]
-    if not inits:
-        raise ValueError("no init event")
-    if not results:
-        raise ValueError("no result event")
-    init, result = inits[0], results[-1]
-    sessions = set()
-    for event in events:
-        session_id = event.get("session_id")
-        if isinstance(session_id, str) and session_id:
-            sessions.add(session_id)
-    raw_skills = init.get("skills")
-    skills = raw_skills if isinstance(raw_skills, list) else []
-    skill_calls, commands = tool_inputs(events)
-    raw_text = result.get("result")
-    result_text = raw_text if isinstance(raw_text, str) else ""
-    answer = extract_answer(result_text)
-    model = init.get("model")
-    model_id = model if isinstance(model, str) else ""
-    raw_duration = result.get("duration_ms")
-    duration_ms = number_or_none(raw_duration)
-    if duration_ms and duration_ms > 0:
-        seconds = duration_ms / 1000
-    else:
-        seconds = wall_seconds(archive, members, run_path)
+    agent = log_agent(events)
+    if agent_file is not None and agent_file["agent"] != agent:
+        raise ValueError(f"a {agent} log, but {AGENT_FILENAME} names {agent_file['agent']}")
+    _, parse = LOG_FORMATS[agent]
+    found = parse(events, agent_file)
+    answer = extract_answer(found["final_text"])
+    seconds = found["seconds"] or wall_seconds(archive, members, run_path)
+    commands = found["commands"]
     script_runs = [command for command in commands if SCRIPT_MARKER in command]
-    session_count = len(sessions)
-    only_session = min(sessions) if session_count == 1 else None
-    subtype = result.get("subtype")
-    shown_subtype = str(subtype)
-    raw_cost = result.get("total_cost_usd")
-    cost = number_or_none(raw_cost)
-    skill_names = [str(skill) for skill in skills]
+    skill_dir_runs = [command for command in commands if SKILL_DIR_MARKER in command]
+    skills = found["skills"]
+    skill_available = SKILL_NAME in skills if skills is not None else None
+    skill_called = SKILL_NAME in found["skill_calls"]
+    skill_used = skill_called or bool(skill_dir_runs)
+    script_run = bool(script_runs)
     parsed = {
-        "model": model_id,
-        "subtype": shown_subtype,
-        "sessions": session_count,
-        "session": only_session,
-        "skill_available": SKILL_NAME in skill_names,
-        "skill_called": SKILL_NAME in skill_calls,
-        "script_run": len(script_runs) > 0,
+        "agent": agent,
+        "model": found["model"],
+        "subtype": found["subtype"],
+        "sessions": found["session_count"],
+        "session": found["session"],
+        "skill_available": skill_available,
+        "skill_called": skill_called,
+        "skill_used": skill_used,
+        "script_run": script_run,
         "answer": answer,
         "seconds": seconds,
-        "cost": cost,
+        "cost": found["cost"],
     }
     return parsed
 
 
 def read_run(archive, members, name):
     """A run as a record: parse_run that never raises, a broken log becomes a record with its reason."""
-    record = {"name": name, "readable": False, "error": None, "model": None, "subtype": None, "session": None,
-              "sessions": 0, "skill_available": False, "skill_called": False, "script_run": False,
-              "answer": None, "seconds": None, "cost": None}
+    record = {"name": name, "readable": False, "error": None, "agent": None, "model": None, "subtype": None,
+              "session": None, "sessions": 0, "skill_available": False, "skill_called": False, "skill_used": False,
+              "script_run": False, "answer": None, "seconds": None, "cost": None}
     run_path = f"{RUNS_DIR}/{name}"
     try:
         parsed = parse_run(archive, members, run_path)
@@ -803,22 +1086,46 @@ def common_reasons(run):
     if not run["readable"]:
         return [f"{LOG_FILENAME} is unreadable ({run['error']})"]
     reasons = []
-    if run["subtype"] != "success":
+    if run["subtype"] != RUN_SUCCESS:
         reasons.append(f"the run did not finish with success (subtype {run['subtype']})")
     if run["sessions"] != 1:
         reasons.append(f"{run['sessions']} session ids in one log, expected 1")
     return reasons
 
 
+def no_model_reason(run):
+    """Claude Code names the model in its log; Codex and OpenCode only in agent.json, which run.sh writes."""
+    if run["agent"] == AGENT_CLAUDE:
+        return "no model id in the log"
+    reason = f"no model id: no {AGENT_FILENAME} next to the log"
+    return reason
+
+
+def no_skill_call_reason(run):
+    """Claude Code and OpenCode call the skill with their tool; Codex reads it with a command."""
+    if run["agent"] == AGENT_CODEX:
+        reason = f"no command in {SKILL_DIR_MARKER}, the skill was not used"
+        return reason
+    reason = f'no call of Skill "{SKILL_NAME}"'
+    return reason
+
+
 def step1_reasons(run, earlier_copies):
-    """Why a run of step 1 is not valid: the rules of the process part."""
+    """Why a run of step 1 is not valid: the rules of the process part.
+
+    Claude Code lists the available skills in its log; for Codex and OpenCode a call of the skill or a
+    command in its directory tells that the skill was there.
+    """
     reasons = common_reasons(run)
     if not run["readable"]:
         return reasons
     if not run["model"]:
-        reasons.append("no model id in the log")
+        no_model = no_model_reason(run)
+        reasons.append(no_model)
     if run["skill_available"]:
         reasons.append(f"the skill {SKILL_NAME} is available in a run without a skill")
+    if run["agent"] != AGENT_CLAUDE and run["skill_used"]:
+        reasons.append(f"the skill {SKILL_NAME} was used in a run without a skill")
     if earlier_copies:
         shown = ", ".join(earlier_copies)
         reasons.append(f"the same log as {shown}")
@@ -831,9 +1138,11 @@ def step3_reasons(run, copies):
     if not run["readable"]:
         return reasons
     if not run["model"]:
-        reasons.append("no model id in the log")
+        no_model = no_model_reason(run)
+        reasons.append(no_model)
     if not run["skill_called"]:
-        reasons.append(f'no call of Skill "{SKILL_NAME}"')
+        no_call = no_skill_call_reason(run)
+        reasons.append(no_call)
     if not run["script_run"]:
         reasons.append(f"no command with {SCRIPT_MARKER} was run")
     if copies:
@@ -861,13 +1170,18 @@ def choose_base_model(step1, valid_names, step3_model, step1_models):
 
 
 def describe_run(name, run):
+    """One line of a run: the agent, the model without the agent prefix, time and cost (n/a in a Codex log)."""
     if not run["readable"]:
         return f"  {name:28} unreadable: {run['error']}"
     seconds = f"{run['seconds']:.1f} s" if run["seconds"] is not None else "no time"
-    cost = f"${run['cost']:.4f}" if run["cost"] is not None else "no cost"
-    session = (run["session"] or "?")[:8]
+    cost = f"${run['cost']:.4f}" if run["cost"] is not None else "cost n/a"
+    # the tail: OpenCode session ids of one machine share their start, only the end tells them apart
+    session = (run["session"] or "?")[-8:]
+    prefix = f"{run['agent']}:"
     model = run["model"] or "?"
-    line = f"  {name:28} {model:24} {run['subtype']:10} {seconds:>9} {cost:>9}  session {session}"
+    shown_model = model[len(prefix):] if model.startswith(prefix) else model
+    line = (f"  {name:28} {run['agent']:8} {shown_model:24} {run['subtype']:10} {seconds:>9} {cost:>9}  "
+            f"session {session}")
     return line
 
 
@@ -964,7 +1278,8 @@ def check_calibration(calibration, copies, report):
     for name, run in calibration.items():
         reasons = common_reasons(run)
         if run["readable"] and not run["skill_called"]:
-            reasons.append(f'no call of Skill "{SKILL_NAME}"')
+            no_call = no_skill_call_reason(run)
+            reasons.append(no_call)
         if copies.get(name):
             shown = ", ".join(copies[name])
             reasons.append(f"the same log as {shown}")
@@ -984,7 +1299,7 @@ def check_runs(archive, members, report):
     step3_model = step3_models[0] if len(step3_models) == 1 else None
     entries = []
     for name in names[STAGE_NO_SKILL]:
-        model = init_model(archive, members, f"{RUNS_DIR}/{name}")
+        model = run_model(archive, members, f"{RUNS_DIR}/{name}")
         entries.append((name, model))
     to_read, unread = select_step1(entries, step3_model)
     step1_models = {model for _, model in entries if model}
@@ -1012,6 +1327,22 @@ def check_runs(archive, members, report):
         report.lines.append(f"  {name:28} not read: over the limit of step 1")
 
 
+def note_big_codex_logs(archive, members, report):
+    """A Codex log over the file limit gets a line of its own: Codex keeps the whole output of every command."""
+    for path in sorted(members):
+        info = members[path]
+        if not path.endswith("/" + LOG_FILENAME) or info.file_size <= MAX_FILE_BYTES:
+            continue
+        with archive.open(info) as fin:
+            head = fin.readline(CODEX_MARK_BYTES)
+        if CODEX_MARK not in head:
+            continue
+        report.errors.append(f"{path}: a Codex log of {info.file_size} bytes, the Grader takes a file of at most "
+                             f"{MAX_FILE_BYTES} bytes (4 MB); Codex keeps the whole output of every command in its "
+                             f"log, so this run cannot be submitted: make another run (in step 3 a script that "
+                             f"prints only the answer keeps the log small)")
+
+
 def check_archive(zip_fpath):
     report = Report()
     size = os.path.getsize(zip_fpath)
@@ -1028,6 +1359,7 @@ def check_archive(zip_fpath):
             infos = archive.infolist()
             members = check_members(infos, report)
             if report.errors:
+                note_big_codex_logs(archive, members, report)
                 return report
             has_runs = any(path.startswith(RUNS_DIR + "/") for path in members)
             if not has_runs:
@@ -1159,10 +1491,11 @@ def build(surname, name, root, runs_dir):
 
 
 def parse_args():
+    run_files = ", ".join(RUN_FILES)
     parser = argparse.ArgumentParser(
         description="Build HW02_<Surname>_<Name>.zip from skill/hr-assistant/ and the runs noskill_*, skill_*, "
-                    "calib_* (log.jsonl, stderr.txt, wall_seconds.txt only), then check it; or only check a "
-                    "ready archive with --check. The check repeats the archive and layout checks of the Grader.",
+                    f"calib_* ({run_files} only), then check it; or only check a ready archive with --check. "
+                    "The check repeats the archive and layout checks of the Grader.",
         epilog="Exit code 0: the archive is accepted with all parts possible; 1: rejected or zeroed.")
     parser.add_argument("surname", nargs="?", help="your surname, as in HW02_Dral_Alexey.zip")
     parser.add_argument("name", nargs="?", help="your name")

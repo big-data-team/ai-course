@@ -118,7 +118,7 @@ Starter files: [hw02_skill_hr_assistant](hw02_skill_hr_assistant)
 | File | What it is |
 |---|---|
 | `prompt.txt` | the fixed prompt of every run: do not change it |
-| `run.sh` | one isolated non-interactive run of the prompt in Claude Code |
+| `run.sh` | one isolated non-interactive run of the prompt in Claude Code, Codex or OpenCode |
 | `check_answer.py` | checks the form of the final answer in a run log: the contract of the prompt, the window and the invariants; there is no etalon in it |
 | `make_calib_data.py` | a copy of the dataset cut at 2024-12, for the calibration run |
 | `calibration_2024.json` | the calibration package: the etalon answer for the window 2024-01..2024-12, the base of your own eval |
@@ -126,9 +126,17 @@ Starter files: [hw02_skill_hr_assistant](hw02_skill_hr_assistant)
 
 `check_answer.py`, `make_calib_data.py` and `pack.py` need Python 3 with its standard library only and work on any OS (on Windows the command is often `py` or `python` instead of `python3`).
 
-The skill follows the open Agent Skills standard and does not depend on the agent: you may work in Claude Code, Codex or OpenCode, further agents are added on request. The Grader does not run models or your code: it reads the skill in `skill/hr-assistant/` and the three files of each run in `runs/<stage>_<model>_r<number>/` (`log.jsonl`, `stderr.txt`, `wall_seconds.txt`). So the OS and the way you start the agent are yours to choose, as long as the Grader can read the log. Today `run.sh` and the Grader read the logs of [Claude Code](https://code.claude.com/docs/en/headless); the support of Codex and OpenCode in `run.sh` and in the Grader is being added and will be ready when submission opens: submission in learn opens together with the automatic check.
+The skill follows the open Agent Skills standard and does not depend on the agent: you may work in Claude Code, Codex or OpenCode, further agents are added on request. `run.sh` starts all three, and the Grader reads the logs of all three; submission in learn opens together with the automatic check. The Grader does not run models or your code: it reads the skill in `skill/hr-assistant/` and the files of each run in `runs/<stage>_<model>_r<number>/`: `log.jsonl`, `stderr.txt`, `wall_seconds.txt` and, for Codex and OpenCode, `agent.json`. So the OS and the way you start the agent are yours to choose, as long as the Grader can read the run. Do steps 1 and 3 in one agent with one model: different agents count as different models.
 
-`run.sh` is a bash script that starts `claude` with its sandbox on. It works on macOS, on Linux and on Windows inside WSL2. On Linux and in WSL2 install the packages `bubblewrap` and `socat`; in WSL keep the solution folder in the WSL file system, not under `/mnt/c`, where file access is much slower. Native Windows without WSL is not covered by `run.sh` yet, because the Claude Code sandbox does not run there: write to the course channel if you need it.
+| Agent | Skill directory in the run | What the log gives | How the Grader sees the skill call |
+|---|---|---|---|
+| [Claude Code](https://code.claude.com/docs/en/headless) | `.claude/skills/hr-assistant/` | answer, model, time, cost, tokens | the Skill tool |
+| Codex | `.agents/skills/hr-assistant/` | answer, tokens; no model, time or cost: the time comes from `wall_seconds.txt`, the model from `agent.json` | Codex has no skill tool: a command that touches the skill directory (`skills/hr-assistant`) counts as using the skill |
+| OpenCode | `.opencode/skills/hr-assistant/` | answer, time (from the log timestamps), cost, tokens; the model comes from `agent.json` | its skill tool |
+
+A Codex log has no cost, so a Codex submission does not enter the leaderboard; the speedup is counted by time and works as usual.
+
+`run.sh` is a bash script that starts the agent named with `--agent`: `claude` (the default), `codex` or `opencode`. With Claude Code it works on macOS, on Linux and on Windows inside WSL2. On Linux and in WSL2 install the packages `bubblewrap` and `socat` for the Claude Code sandbox; in WSL keep the solution folder in the WSL file system, not under `/mnt/c`, where file access is much slower. Codex and OpenCode were tested on macOS only: codex-cli 0.153.0-alpha.5 (ChatGPT login, `gpt-5.6-luna` and `gpt-5.6-terra`) and OpenCode 1.18.30 (an Anthropic key, `anthropic/claude-haiku-4-5`). On Linux and in WSL `run.sh` starts them with a "not tested on this OS" note. Native Windows without WSL is not covered: use WSL.
 
 ### Setup
 
@@ -141,12 +149,17 @@ my_solution_folder/
     data_2024/                python3 make_calib_data.py data/ data_2024/
     my_draft/hr-assistant/    step 2: SKILL.md only, not submitted
     skill/hr-assistant/       step 3: SKILL.md, scripts/, references/
-    runs/                     created by run.sh: three files per run
+    runs/                     created by run.sh: the files of each run
 ```
 
 ### Runs
 
-`./run.sh <stage> <model> <number> <skill_dir | none> <data_dir>`: the stage is `noskill` (step 1), `draft` (step 2), `skill` (step 3) or `calib` (the calibration); the model is a short name (`haiku`, `sonnet`, `opus`) or a full model id. Steps 1 and 3 run on one base model.
+`./run.sh <stage> <model> <number> <skill_dir | none> <data_dir> [--agent claude|codex|opencode]`: the stage is `noskill` (step 1), `draft` (step 2), `skill` (step 3) or `calib` (the calibration). The model depends on the agent:
+- Claude Code: a short name (`haiku`, `sonnet`, `opus`) or a full model id;
+- Codex: a full model id, such as `gpt-5.6-luna`; short names and ids with "/" are refused;
+- OpenCode: `provider/model`, such as `anthropic/claude-haiku-4-5`.
+
+Steps 1 and 3 run in one agent on one base model.
 
 ```bash
 ./run.sh noskill haiku 1 none data/                     # step 1: runs 1, 2 and 3 of the base model
@@ -156,17 +169,31 @@ my_solution_folder/
 python3 make_calib_data.py data/ data_2024/
 ./run.sh calib haiku 1 skill/hr-assistant data_2024/    # the calibration: optional
 python3 check_answer.py runs/skill_haiku_r1/log.jsonl   # the form of the answer
+
+# the same steps in Codex and in OpenCode: only the model and --agent change
+./run.sh noskill gpt-5.6-luna 1 none data/ --agent codex
+./run.sh skill gpt-5.6-luna 1 skill/hr-assistant data/ --agent codex
+./run.sh noskill anthropic/claude-haiku-4-5 1 none data/ --agent opencode
+./run.sh skill anthropic/claude-haiku-4-5 1 skill/hr-assistant data/ --agent opencode
 ```
 
 What `run.sh` does:
-- the run works in `${HW02_RUNS_DIR:-~/hw02_runs}/<stage>_<model>_r<number>/`, which must lie outside any git repository: its own copy of the data in `data/`, the skill in `.claude/skills/hr-assistant/`;
-- the `.claude/settings.json` of the run turns the sandbox on and denies reading the other runs, your solution folder, the source skill and data and `~/.claude`;
-- `claude -p` loads the project settings only (none of your personal skills and `CLAUDE.md`), no MCP servers and no web search, with a budget of $2 per run;
-- after the run it copies `log.jsonl`, `stderr.txt` and `wall_seconds.txt` to `runs/<stage>_<model>_r<number>/` of the current folder (`--out DIR` changes it) and prints the model from the log, whether the agent called the skill and whether it ran a script from `scripts/`.
+- the run works in `${HW02_RUNS_DIR:-~/hw02_runs}/<stage>_<model>_r<number>/`, which must lie outside any git repository: its own copy of the data in `data/`, the skill where the agent looks for it (`.claude/skills/hr-assistant/`, `.agents/skills/hr-assistant/` or `.opencode/skills/hr-assistant/`);
+- Claude Code: the `.claude/settings.json` of the run turns the sandbox on and denies reading the other runs, your solution folder, the source skill and data and `~/.claude`; `claude -p` loads the project settings only (none of your personal skills and `CLAUDE.md`), no MCP servers and no web search, with a budget of $2 per run;
+- Codex: `codex exec` ignores its own config; rules, plugins, apps, hooks, memories, bundled skills, `AGENTS.md` and web search are off; the seatbelt sandbox lets it write only into the run directory, with no network, and denies reading `~/.codex`, `~/.claude`, `~/.ssh`, `~/.config`, your solution folder and the other runs; it inherits the environment without the variables whose names contain `KEY`, `SECRET` or `TOKEN`;
+- OpenCode: `opencode run` gets its own config directory, temp directory and database per run; your personal config, the Claude Code skills and external skills are off, only the skill `hr-assistant` is allowed, external directories, web fetch, web search and sub-agents are denied;
+- Codex and OpenCode have no budget cap: `run.sh` stops a run after `HW02_TIMEOUT_SECONDS` seconds (900 by default);
+- after the run it copies `log.jsonl`, `stderr.txt`, `wall_seconds.txt` and, for Codex and OpenCode, `agent.json` to `runs/<stage>_<model>_r<number>/` of the current folder (`--out DIR` changes it), only if they are plain files, and prints the model, whether the agent used the skill and whether it ran a script from `scripts/`.
 
 Good to know:
-- the run name is cleaned: the model is lowercased and every character other than `a-z 0-9 . -` becomes `-`, so `Model_X` gives `noskill_model-x_r1`;
+- the run name is cleaned: the model is lowercased and every character other than `a-z 0-9 . -` becomes `-`, so `Model_X` gives `noskill_model-x_r1` and `anthropic/claude-haiku-4-5` gives `skill_anthropic-claude-haiku-4-5_r1`;
 - a run directory is never reused: if it exists, `run.sh` stops and asks for the next number;
+- a Claude Code run has three files: `log.jsonl`, `stderr.txt`, `wall_seconds.txt`. A Codex or OpenCode run has a fourth one, `agent.json`: `{"agent": "codex", "model": "gpt-5.6-luna", "agent_version": "codex-cli 0.153.0-alpha.5"}`. Their logs name no model, so the Grader takes it from this file: at most 4 KB, all three keys are required strings, `agent` is `codex` or `opencode`. A Claude Code run needs no `agent.json`; if one is there, it must be complete too;
+- if you start Codex or OpenCode by hand, write `agent.json` yourself: the model is what you passed to `-m` (Codex) or `providerID/id` from `opencode export <sessionID>` (OpenCode), the version is the output of `codex --version` or `opencode --version`. Write `wall_seconds.txt` too: one number, the seconds measured around the agent command. Codex needs it, because its log has no time; for OpenCode it is a fallback;
+- Codex and OpenCode have no budget cap: a run is stopped after `HW02_TIMEOUT_SECONDS` seconds, 900 by default (`HW02_TIMEOUT_SECONDS=1800 ./run.sh ...` changes it);
+- OpenCode is isolated less than the other two: its bash tool has no OS sandbox, so it can read files outside the run and reach the network. It also sees your environment variables, an API key included, and a model may print them into the log, which goes into the archive. Do not keep secrets in the environment of a run;
+- if a newer Codex refuses a flag of `run.sh`, the run ends at once with an empty log, and `run.sh` prints the version it was tested with next to yours;
+- without the skill Codex and OpenCode sometimes do not put the JSON into the final message (Codex once wrote it to a file). The Grader reads only the final message, so such a step 1 run cannot be the base of the speedup: `run.sh` and `check_answer.py` warn about it;
 - a failed run: delete its directory in `runs/` (its working copy in `HW02_RUNS_DIR` may go too) and start the next number; the submission holds exactly three `skill_*` runs;
 - do not start runs in parallel in one `HW02_RUNS_DIR`: a run closes only the run directories that exist when it starts;
 - the working copies in `HW02_RUNS_DIR` (`~/hw02_runs` by default) may be deleted once a run is over: each run copies the data, about 100 MB where the file system cannot clone files. After that pass the data to the check yourself: `python3 check_answer.py runs/skill_haiku_r1/log.jsonl --data data/`;
@@ -184,7 +211,7 @@ python3 pack.py --check HW02_Dral_Alexey.zip
 
 On Windows first delete the `__pycache__` folders and move the `draft_*` runs out of `runs/` into another folder, then select only `skill` and `runs` and choose Send to > Compressed (zipped) folder.
 
-Or build and check in one go: `python3 pack.py Dral Alexey`. It packs `skill/hr-assistant/` and the runs `noskill_*`, `skill_*`, `calib_*` from `runs/` with their three files, and leaves out `draft_*`, the data and service files. Do not put `draft_*` runs into a hand-made archive either.
+Or build and check in one go: `python3 pack.py Dral Alexey`. It packs `skill/hr-assistant/` and the runs `noskill_*`, `skill_*`, `calib_*` from `runs/` with their run files (`log.jsonl`, `stderr.txt`, `wall_seconds.txt` and, for Codex and OpenCode, `agent.json`), and leaves out `draft_*`, the data and service files. Do not put `draft_*` runs into a hand-made archive either.
 
 `pack.py --check` repeats the checks of the Grader and reports on three levels:
 - errors: the Grader rejects the whole archive, the score is 0 (over 3 MB, a path outside the archive, a symbolic link, a forbidden extension, no `runs/`, ...);
@@ -215,6 +242,8 @@ Our reference runs in Claude Code on the dataset: Haiku is the simple model, Opu
 | 2. The skill as text | Opus | 0.83 | 0.95–0.96 → 1.00 | 0.92 | 276–304 | 1.19–1.32 |
 | 3. The skill + tool | Haiku | 0.84 | 0.95 → 1.00 | 0.92 | 19–20 | 0.006 |
 | 3. The skill + tool | Opus | 0.84 | 0.95 → 1.00 | 0.92 | 32–35 | 0.21 |
+
+Our runs in the other two agents, with the skill: Codex on `gpt-5.6-luna` took 52–57 s with Q 0.92; OpenCode on Haiku 4.5 took 24–25 s and $0.028 per run with Q 0.92.
 
 While the model counts, a stronger model buys little quality for a lot of money. Once the tool counts, the strong model is not needed at all: it runs the same script and returns the same answer.
 
