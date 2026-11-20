@@ -95,6 +95,8 @@ SKILL_DIR_MARKER = f"skills/{SKILL_NAME}"
 SCRIPT_MARKER = "scripts/"
 # the limit of the Grader for one file of the archive
 MAX_FILE_BYTES = 4 * 1024 * 1024
+# a longer final answer of step 3 is no answer for the Grader: Q of that run is 0
+MAX_SKILL_ANSWER_BYTES = 64 * 1024
 TIMEOUT_EXIT = 124
 INTERRUPT_EXIT = 130
 STOP_GRACE_SECONDS = 10
@@ -690,21 +692,30 @@ AGENT_FACTS = {"claude": claude_facts, "codex": codex_facts, "opencode": opencod
 
 
 def has_json_object(text):
-    """The rule of the Grader: the last ```json block, else the whole text, must be one JSON object."""
+    """The rule of the Grader: the last ```json block, else the whole text, must be one JSON object.
+
+    Blank characters after the opening are skipped; a value with a lone surrogate escape such as \\ud800 is
+    no JSON for the Grader.
+    """
     blocks, position = [], 0
     while True:
         opening = text.find("```json", position)
         if opening < 0:
             break
-        closing = text.find("```", opening + len("```json"))
+        start = opening + len("```json")
+        while start < len(text) and text[start].isspace():
+            start += 1
+        closing = text.find("```", start)
         if closing < 0:
             break
-        blocks.append(text[opening + len("```json"):closing])
+        blocks.append(text[start:closing])
         position = closing + len("```")
     candidate = blocks[-1] if blocks else text
     try:
         answer = json.loads(candidate)
-    except (ValueError, RecursionError):
+        dumped = json.dumps(answer, ensure_ascii=False)
+        dumped.encode("utf-8")
+    except (ValueError, RecursionError, MemoryError, UnicodeEncodeError):
         return False
     found = isinstance(answer, dict)
     return found
@@ -764,6 +775,11 @@ def summary(stage, agent, log_fpath, shown_log, wall_seconds_text):
         print(f"warning: {SKILL_NAME} was used in a run without a skill: not a valid step 1 run", file=sys.stderr)
     if stage == "noskill" and not has_json_object(facts["final_text"]):
         print("warning: the final message has no JSON: this run cannot be the speedup base", file=sys.stderr)
+    encoded_text = facts["final_text"].encode("utf-8", "surrogatepass")
+    answer_bytes = len(encoded_text)
+    if stage == "skill" and answer_bytes > MAX_SKILL_ANSWER_BYTES:
+        print(f"warning: the final answer is {answer_bytes} bytes, over {MAX_SKILL_ANSWER_BYTES}: the Grader takes "
+              f"no answer from such a run of step 3, Q of this run is 0", file=sys.stderr)
     if stage in WITH_SKILL and not facts["skill_called"]:
         if agent == "codex":
             no_use = f"no command in {SKILL_DIR_MARKER}, the skill was not used"
@@ -952,12 +968,15 @@ fi
 python3 -I -c "$HELPER" check "$RUNS_ROOT_ABS/$RUN_NAME" "$AGENT" "$@" || exit 2
 
 case "$STAGE" in
-    calib) EXPECTED_LAST_MONTH="$CALIB_LAST_MONTH" ;;
-    *) EXPECTED_LAST_MONTH="$MAIN_LAST_MONTH" ;;
+    calib)
+        EXPECTED_LAST_MONTH="$CALIB_LAST_MONTH"
+        DATA_NOTE="calibration_2024.json is the answer on the course dataset cut by make_calib_data.py" ;;
+    *)
+        EXPECTED_LAST_MONTH="$MAIN_LAST_MONTH"
+        DATA_NOTE="the Grader checks the answers against the snapshot of the course dataset" ;;
 esac
 if [ "$LAST_MONTH" != "$EXPECTED_LAST_MONTH" ]; then
-    warn "the last month in $DATA_ARG is $LAST_MONTH, stage $STAGE expects $EXPECTED_LAST_MONTH:" \
-         "Grader checks the snapshot from the course dataset"
+    warn "the last month in $DATA_ARG is $LAST_MONTH, stage $STAGE expects $EXPECTED_LAST_MONTH: $DATA_NOTE"
 fi
 
 # ---------------------------------------------------------------- the run directory

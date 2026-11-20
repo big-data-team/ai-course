@@ -72,6 +72,13 @@ RUNS_PER_STAGE = 3
 # without a single model of step 3, one budget of 12 for all of them
 MAX_BASE_STEP1_RUNS = 6
 MAX_OTHER_STEP1_RUNS = 6
+# of step 3 and of calibration the Grader reads the first 6 runs by name each
+MAX_READ_SKILL_RUNS = 6
+MAX_READ_CALIBRATION_RUNS = 6
+# a longer final answer of step 3 is no answer for the Grader: Q of that run is 0
+MAX_SKILL_ANSWER_BYTES = 64 * 1024
+# the Grader checks the frontmatter and the referenced files on the first part of a longer SKILL.md
+MAX_SKILL_MD_BYTES = 32 * 1024
 SPEEDUP_MIN = 3.0
 SCRIPT_MARKER = "scripts/"
 RUN_SUCCESS = "success"
@@ -470,7 +477,8 @@ def check_skill(archive, members, report):
     """skill/hr-assistant/: the requirements of the assignment and skills-ref; any problem zeroes the parts.
 
     UTF-8 and the size of the frontmatter are checked first, as the Grader checks them before parsing.
-    A SKILL.md over 500 lines and a missing referenced file are only warnings.
+    A SKILL.md over 500 lines and a missing referenced file are only warnings. Of a SKILL.md over 32 KB
+    only the first 32 KB are checked, as the Grader keeps only them.
     """
     skill_parts = [path.split("/") for path in members if path.startswith(SKILL_DIR + "/")]
     if not skill_parts:
@@ -517,11 +525,18 @@ def check_skill(archive, members, report):
     if line_count > MAX_SKILL_MD_LINES:
         report.warnings.append(f"{where}: {SKILL_MD} has {line_count} lines, the standard recommends at most "
                                f"{MAX_SKILL_MD_LINES}")
+    encoded = text.encode("utf-8")
+    head = encoded[:MAX_SKILL_MD_BYTES]
+    checked = head.decode("utf-8", errors="ignore")
+    if len(encoded) > MAX_SKILL_MD_BYTES:
+        size = len(content)
+        report.warnings.append(f"{where}: {SKILL_MD} is {size} bytes, only its first {MAX_SKILL_MD_BYTES} bytes "
+                               f"are checked")
     path_set = set(members)
-    missing = missing_refs(text, where, path_set)
+    missing = missing_refs(checked, where, path_set)
     for ref in missing:
         report.warnings.append(f"{where}: {SKILL_MD} refers to a missing file {ref}")
-    block, problem = frontmatter_block(text)
+    block, problem = frontmatter_block(checked)
     if block is not None:
         problem = frontmatter_size_problem(block)
     if problem:
@@ -973,6 +988,8 @@ def parse_run(archive, members, run_path):
     skill_called = SKILL_NAME in found["skill_calls"]
     skill_used = skill_called or bool(skill_dir_runs)
     script_run = bool(script_runs)
+    encoded_text = found["final_text"].encode("utf-8")
+    answer_bytes = len(encoded_text)
     parsed = {
         "agent": agent,
         "model": found["model"],
@@ -984,6 +1001,7 @@ def parse_run(archive, members, run_path):
         "skill_used": skill_used,
         "script_run": script_run,
         "answer": answer,
+        "answer_bytes": answer_bytes,
         "seconds": seconds,
         "cost": found["cost"],
     }
@@ -994,7 +1012,7 @@ def read_run(archive, members, name):
     """A run as a record: parse_run that never raises, a broken log becomes a record with its reason."""
     record = {"name": name, "readable": False, "error": None, "agent": None, "model": None, "subtype": None,
               "session": None, "sessions": 0, "skill_available": False, "skill_called": False, "skill_used": False,
-              "script_run": False, "answer": None, "seconds": None, "cost": None}
+              "script_run": False, "answer": None, "answer_bytes": 0, "seconds": None, "cost": None}
     run_path = f"{RUNS_DIR}/{name}"
     try:
         parsed = parse_run(archive, members, run_path)
@@ -1194,9 +1212,11 @@ def read_runs(archive, members, names):
     return runs
 
 
-def check_step3(step3, step1, copies, report):
-    """Three runs of one model, each with the skill called and a script run, none a copy of another log."""
-    step3_count = len(step3)
+def check_step3(step3, step3_count, step1, copies, report):
+    """Three runs of one model, each with the skill called and a script run, none a copy of another log.
+
+    step3_count is the number of runs of step 3 in the archive, read or not.
+    """
     if step3_count != RUNS_PER_STAGE:
         report.zeroed.append(f"{step3_count} runs {STAGE_SKILL}_* instead of {RUNS_PER_STAGE}")
     for name, run in step3.items():
@@ -1206,7 +1226,11 @@ def check_step3(step3, step1, copies, report):
         reasons = step3_reasons(run, scored_copies)
         for reason in reasons:
             report.zeroed.append(f"{name}: {reason}")
-        if run["readable"] and not isinstance(run["answer"], dict):
+        if not run["readable"]:
+            continue
+        if run["answer_bytes"] > MAX_SKILL_ANSWER_BYTES:
+            report.warnings.append(f"{name}: the answer is over {MAX_SKILL_ANSWER_BYTES} bytes: Q of this run is 0")
+        elif not isinstance(run["answer"], dict):
             report.warnings.append(f"{name}: no JSON object in the final answer: Q of this run is 0 "
                                    f"(check_answer.py shows the contract)")
     models = sorted({run["model"] for run in step3.values() if run["readable"] and run["model"]})
@@ -1218,7 +1242,7 @@ def check_step3(step3, step1, copies, report):
 
 
 def check_step1(step1, copies, step3_model, step1_models, report):
-    """The valid runs of step 1 and the base model; returns the names of the valid runs."""
+    """The valid runs of step 1 and the base model of the process: (names of the valid runs, the base model)."""
     valid_names = set()
     for name, run in step1.items():
         run_copies = copies.get(name, [])
@@ -1232,42 +1256,83 @@ def check_step1(step1, copies, step3_model, step1_models, report):
     base_model = choose_base_model(step1, valid_names, step3_model, step1_models)
     base_valid = [name for name in valid_names if step1[name]["model"] == base_model]
     valid_count = len(base_valid)
-    if step3_model and step3_model not in step1_models and valid_count:
-        report.zeroed.append(f"step 1 has no run of the step 3 model {step3_model}, only of {base_model}: "
-                             f"steps 1 and 3 run on one base model")
     process = min(valid_count, RUNS_PER_STAGE)
     shown_base = base_model or "none"
     report.lines.append(f"base model: {shown_base}; the process part counts {process}/{RUNS_PER_STAGE} "
                         f"valid runs of step 1")
     if valid_count < RUNS_PER_STAGE:
         report.warnings.append(f"{valid_count} valid runs {STAGE_NO_SKILL}_* of the base model, "
-                               f"{RUNS_PER_STAGE} needed: the process part and the speedup suffer")
-    return valid_names
+                               f"{RUNS_PER_STAGE} needed: the process part suffers")
+    return valid_names, base_model
 
 
-def check_speedup(step1, valid_names, step3, step3_model, report):
-    """The speedup base: valid runs of step 1 on the model of step 3 with a JSON object and a time."""
+def choose_speedup_base_model(step1, counted, step3_model):
+    """The model of step 3 when it has a computed run of step 1; else the model with the most, a tie by name."""
+    models = [step1[name]["model"] for name in counted]
+    if step3_model and step3_model in models:
+        return step3_model
+    counts = collections.Counter(models)
+    if not counts:
+        return None
+    count_values = counts.values()
+    best = max(count_values)
+    leaders = sorted(model for model, count in counts.items() if count == best)
+    base_model = leaders[0]
+    return base_model
+
+
+def speedup_marks(base_model, base_count, step3_model, process_base_model):
+    """What the Grader marks in the speedup for a double check: a small base, a base on another model."""
+    marks = []
+    if base_model is None:
+        return marks
+    if base_count < RUNS_PER_STAGE:
+        marks.append(f"the base is {base_count} runs of step 1, fewer than {RUNS_PER_STAGE}")
+    if step3_model and base_model != step3_model:
+        marks.append("the base is on another model than step 3")
+    if process_base_model != base_model:
+        shown_process = process_base_model or "none"
+        marks.append(f"process base model {shown_process}, speedup base model {base_model}")
+    return marks
+
+
+def check_speedup(step1, valid_names, step3, step3_model, process_base_model, report):
+    """The speedup base: the computed runs of step 1, valid ones with a JSON object as the answer and a run time.
+
+    They are taken on the model of step 3 when it has any, else on the model with the most of them; one run
+    is enough. A small base or a base on another model is marked for a double check, never refused.
+    """
+    counted = [name for name, run in step1.items()
+               if name in valid_names and isinstance(run["answer"], dict) and run["seconds"]]
+    base_model = choose_speedup_base_model(step1, counted, step3_model)
+    base_names = [name for name in counted if step1[name]["model"] == base_model]
+    base_seconds = [step1[name]["seconds"] for name in base_names]
+    step3_seconds = [run["seconds"] for run in step3.values() if run["readable"] and run["seconds"]]
+    base_count = len(base_names)
+    base_median = statistics.median(base_seconds) if base_seconds else None
+    if step3_model and base_model != step3_model:
+        report.lines.append(f"no computed run of step 1 on the step 3 model {step3_model}: the speedup base is "
+                            f"taken from the computed runs of another model, if the archive has them")
+    if base_model is not None:
+        shown_names = listed(base_names)
+        report.lines.append(f"speedup base: {base_count} computed runs of step 1 on {base_model}, median "
+                            f"{base_median:g} s: {shown_names}")
+    marks = speedup_marks(base_model, base_count, step3_model, process_base_model)
+    for mark in marks:
+        report.lines.append(f"speedup base, marked for a double check: {mark}")
     if not step3_model:
         return
-    base_seconds = []
-    for name in sorted(valid_names):
-        run = step1[name]
-        if run["model"] == step3_model and isinstance(run["answer"], dict) and run["seconds"]:
-            base_seconds.append(run["seconds"])
-    step3_seconds = [run["seconds"] for run in step3.values() if run["readable"] and run["seconds"]]
-    base_count = len(base_seconds)
-    if base_count < RUNS_PER_STAGE:
-        report.warnings.append(f"{base_count} valid runs of step 1 on {step3_model} with a JSON answer and a time, "
-                               f"{RUNS_PER_STAGE} needed as the speedup base: the speedup part gets 0")
+    if base_model is None:
+        report.warnings.append("no valid run of step 1 with a JSON object as the answer and a run time: "
+                               "no base for the speedup, the speedup part gets 0")
         return
     if not step3_seconds:
         report.warnings.append("no run time of step 3: the speedup part gets 0")
         return
-    base_median = statistics.median(base_seconds)
     step3_median = statistics.median(step3_seconds)
     speedup = base_median / step3_median
-    report.lines.append(f"speedup by median time: {speedup:.1f} ({base_median:.0f} s / {step3_median:.0f} s); "
-                        f"the Grader also needs the mean Q of step 3 >= 0.6")
+    report.lines.append(f"speedup by median time: {speedup:.2f} (step 1 {base_median:g} s / step 3 "
+                        f"{step3_median:g} s); the Grader also needs the mean Q of step 3 >= 0.6")
     if speedup < SPEEDUP_MIN:
         report.warnings.append(f"the speedup is {speedup:.2f}, at least {SPEEDUP_MIN:g} needed: "
                                f"the speedup part gets 0")
@@ -1288,13 +1353,19 @@ def check_calibration(calibration, copies, report):
 
 
 def check_runs(archive, members, report):
-    """Step 3 first: its model is the base model, step 1 is read and judged against it."""
+    """Step 3 first: its model picks the runs of step 1 to read and comes first as the base of both parts.
+
+    Of step 3 and of calibration only the first runs by name are read, as the Grader reads them.
+    """
     found = list_runs(members, report)
     names = {stage: [] for stage in KNOWN_STAGES}
     for stage, _, _, name in found:
         names[stage].append(name)
-    step3 = read_runs(archive, members, names[STAGE_SKILL])
-    calibration = read_runs(archive, members, names[STAGE_CALIBRATION])
+    step3_names, calibration_names = names[STAGE_SKILL], names[STAGE_CALIBRATION]
+    step3 = read_runs(archive, members, step3_names[:MAX_READ_SKILL_RUNS])
+    calibration = read_runs(archive, members, calibration_names[:MAX_READ_CALIBRATION_RUNS])
+    unread_step3 = step3_names[MAX_READ_SKILL_RUNS:]
+    unread_calibration = calibration_names[MAX_READ_CALIBRATION_RUNS:]
     step3_models = sorted({run["model"] for run in step3.values() if run["readable"] and run["model"]})
     step3_model = step3_models[0] if len(step3_models) == 1 else None
     entries = []
@@ -1308,15 +1379,21 @@ def check_runs(archive, members, report):
     for stage_runs in (step1, step3, calibration):
         all_runs += stage_runs.values()
     copies = session_copies(all_runs)
-    check_step3(step3, step1, copies, report)
-    valid_names = check_step1(step1, copies, step3_model, step1_models, report)
+    step3_count = len(step3_names)
+    check_step3(step3, step3_count, step1, copies, report)
+    valid_names, base_model = check_step1(step1, copies, step3_model, step1_models, report)
     if unread:
         unread_count = len(unread)
         shown_unread = listed(unread)
         report.warnings.append(f"{unread_count} runs {STAGE_NO_SKILL}_* over the limit of {MAX_BASE_STEP1_RUNS} runs "
                                f"of the base model and {MAX_OTHER_STEP1_RUNS} of the other models are not read by "
                                f"the Grader: {shown_unread}")
-    check_speedup(step1, valid_names, step3, step3_model, report)
+    if unread_calibration:
+        unread_count = len(unread_calibration)
+        shown_unread = listed(unread_calibration)
+        report.warnings.append(f"{unread_count} runs {STAGE_CALIBRATION}_* over the limit of "
+                               f"{MAX_READ_CALIBRATION_RUNS} are not read by the Grader: {shown_unread}")
+    check_speedup(step1, valid_names, step3, step3_model, base_model, report)
     check_calibration(calibration, copies, report)
     report.lines.append("runs:")
     for stage_runs in (step1, step3, calibration):
@@ -1325,6 +1402,10 @@ def check_runs(archive, members, report):
             report.lines.append(line)
     for name in unread:
         report.lines.append(f"  {name:28} not read: over the limit of step 1")
+    for name in unread_step3:
+        report.lines.append(f"  {name:28} not read: over the limit of {MAX_READ_SKILL_RUNS} runs of step 3")
+    for name in unread_calibration:
+        report.lines.append(f"  {name:28} not read: over the limit of {MAX_READ_CALIBRATION_RUNS} calibration runs")
 
 
 def note_big_codex_logs(archive, members, report):

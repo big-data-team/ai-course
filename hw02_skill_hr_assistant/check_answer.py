@@ -40,6 +40,8 @@ TOP_SKILLS = 20
 WINDOW_MONTHS = 12
 # longer skill names and month keys are off the contract: the Grader keeps its records small
 MAX_NAME_CHARS = 100
+# a longer final answer of step 3 is no answer for the Grader: Q of that run is 0
+MAX_SKILL_ANSWER_BYTES = 64 * 1024
 NOSKILL_NOTE = ("step 1 is not graded on quality; the run counts for the process and the speedup base "
                 "if the agent finished and returned a JSON object")
 NO_JSON_WARNING = "warning: the final message has no JSON: this run cannot be the speedup base"
@@ -683,6 +685,11 @@ def main():
     print(f"run:    {run['subtype']}")
     shown_answer = answer_state(answer, source)
     print(f"answer: {shown_answer}")
+    encoded_text = run["final_text"].encode("utf-8")
+    answer_bytes = len(encoded_text)
+    if stage == "skill" and answer_bytes > MAX_SKILL_ANSWER_BYTES:
+        print(f"warning: the final answer is {answer_bytes} bytes, over {MAX_SKILL_ANSWER_BYTES}: the Grader "
+              f"takes no answer from such a run of step 3, Q of this run is 0")
 
     unreadable = agent_problems(agent, agent_file, agent_problem)
     problems = prompt_contract_problems(answer, stage, source)
